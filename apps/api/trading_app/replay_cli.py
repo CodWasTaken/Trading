@@ -9,7 +9,7 @@ from typing import TypeVar
 
 from pydantic import BaseModel
 
-from .config import get_settings
+from .config import Settings, get_settings
 from .domain import NewsEvent
 from .historical import HistoricalBar
 from .model_registry import ModelRegistry
@@ -35,31 +35,19 @@ async def replay_history(
     spread_bps: float,
     slippage_bps: float,
     starting_cash: float | None,
+    signal_threshold: float | None = None,
 ) -> dict[str, object]:
     bars_source = Path(bars_path)
     news_source = Path(news_path)
-    bars = _load_json_lines(bars_source, HistoricalBar)
-    news = _load_json_lines(news_source, NewsEvent, allow_empty=True)
-    settings = get_settings()
-    if starting_cash is not None:
-        settings = settings.model_copy(update={"trading_starting_cash": starting_cash})
-    strategy_factory, strategy_name = _strategy_factory(
+    bars, news = load_replay_inputs(bars_source, news_source)
+    settings = replay_settings(starting_cash)
+    strategy_factory, strategy_name, resolved_threshold = build_strategy_factory(
         strategy_mode,
         registry_path,
         allow_synthetic_champion=allow_synthetic_champion,
+        signal_threshold=signal_threshold,
     )
-    source_metadata: dict[str, object] = {
-        "bars": {
-            "path": str(bars_source),
-            "records": len(bars),
-            "sha256": _sha256(bars_source),
-        },
-        "news": {
-            "path": str(news_source),
-            "records": len(news),
-            "sha256": _sha256(news_source),
-        },
-    }
+    sources = replay_source_metadata(bars_source, news_source, bars, news)
 
     async def execute() -> ReplayResult:
         return await run_historical_replay(
@@ -68,10 +56,11 @@ async def replay_history(
             settings,
             strategy_factory,
             strategy_name=strategy_name,
-            bar_interval=_minutes(bar_minutes),
+            bar_interval=minutes(bar_minutes),
             spread_bps=spread_bps,
             slippage_bps=slippage_bps,
-            source_metadata=source_metadata,
+            signal_threshold=resolved_threshold,
+            source_metadata=sources,
         )
 
     result = await execute()
@@ -109,14 +98,25 @@ async def replay_history(
     return report
 
 
-def _strategy_factory(
+def build_strategy_factory(
     strategy_mode: str,
     registry_path: str,
     *,
     allow_synthetic_champion: bool,
-) -> tuple[Callable[[], Strategy], str]:
+    signal_threshold: float | None,
+) -> tuple[Callable[[], Strategy], str, float]:
     if strategy_mode == "explainable":
-        return ExplainableCatalystStrategy, "explainable"
+        threshold = 0.16 if signal_threshold is None else signal_threshold
+        if threshold <= 0:
+            raise ValueError("Explainable signal threshold must be positive")
+
+        def explainable_factory() -> Strategy:
+            return ExplainableCatalystStrategy(
+                minimum_combined=threshold,
+                repeat_combined=max(0.30, threshold),
+            )
+
+        return explainable_factory, f"explainable:{threshold:g}", threshold
     registry = ModelRegistry(registry_path)
     record = registry.champion()
     if record is None:
@@ -130,11 +130,51 @@ def _strategy_factory(
     model = registry.load_champion()
     if model is None:
         raise ValueError("Champion model artifact could not be loaded")
+    threshold = 0.0005 if signal_threshold is None else signal_threshold
+    if threshold <= 0:
+        raise ValueError("Champion signal threshold must be positive")
 
-    def factory() -> Strategy:
-        return ChampionModelStrategy(model)
+    def champion_factory() -> Strategy:
+        return ChampionModelStrategy(model, minimum_edge=threshold)
 
-    return factory, f"champion:{record.version}"
+    return champion_factory, f"champion:{record.version}:{threshold:g}", threshold
+
+
+def load_replay_inputs(
+    bars_source: Path,
+    news_source: Path,
+) -> tuple[list[HistoricalBar], list[NewsEvent]]:
+    return (
+        _load_json_lines(bars_source, HistoricalBar),
+        _load_json_lines(news_source, NewsEvent, allow_empty=True),
+    )
+
+
+def replay_settings(starting_cash: float | None) -> Settings:
+    settings = get_settings()
+    if starting_cash is not None:
+        settings = settings.model_copy(update={"trading_starting_cash": starting_cash})
+    return settings
+
+
+def replay_source_metadata(
+    bars_source: Path,
+    news_source: Path,
+    bars: list[HistoricalBar],
+    news: list[NewsEvent],
+) -> dict[str, object]:
+    return {
+        "bars": {
+            "path": str(bars_source),
+            "records": len(bars),
+            "sha256": _sha256(bars_source),
+        },
+        "news": {
+            "path": str(news_source),
+            "records": len(news),
+            "sha256": _sha256(news_source),
+        },
+    }
 
 
 def _load_json_lines(
@@ -167,7 +207,7 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _minutes(value: int) -> timedelta:
+def minutes(value: int) -> timedelta:
     if value <= 0:
         raise ValueError("bar_minutes must be positive")
     return timedelta(minutes=value)
