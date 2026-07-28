@@ -41,8 +41,12 @@ class Settings(BaseSettings):
     alpaca_api_key: str | None = None
     alpaca_api_secret: str | None = None
     alpaca_trading_base_url: str = "https://paper-api.alpaca.markets"
+    alpaca_data_base_url: str = "https://data.alpaca.markets"
     alpaca_data_stream_url: str = "wss://stream.data.alpaca.markets/v2/iex"
     alpaca_news_stream_url: str = "wss://stream.data.alpaca.markets/v1beta1/news"
+
+    sec_user_agent: str | None = None
+    sec_data_base_url: str = "https://data.sec.gov"
 
     @field_validator("trading_symbols", "trading_cors_origins", mode="before")
     @classmethod
@@ -58,8 +62,15 @@ class Settings(BaseSettings):
 
     def require_alpaca_credentials(self) -> tuple[str, str]:
         if not self.alpaca_api_key or not self.alpaca_api_secret:
-            raise RuntimeError("Alpaca credentials are required for alpaca-paper mode")
+            raise RuntimeError("Alpaca credentials are required for Alpaca data or paper mode")
         return self.alpaca_api_key, self.alpaca_api_secret
+
+    def require_sec_user_agent(self) -> str:
+        if not self.sec_user_agent:
+            raise RuntimeError(
+                "SEC_USER_AGENT is required and must include an application name and email"
+            )
+        return self.sec_user_agent
 
 
 @lru_cache
