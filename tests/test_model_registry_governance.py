@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from trading_app.model_registry import REGISTRY_SCHEMA_VERSION, ModelRegistry
 from trading_app.research import BacktestMetrics, RidgeReturnModel, synthetic_feature_rows
 
@@ -105,3 +107,54 @@ def test_operator_alias_cannot_reference_unknown_model(tmp_path) -> None:
         assert "Unknown model version" in str(error)
     else:
         raise AssertionError("Expected an unknown model alias target to be rejected")
+
+
+def test_promotion_rejects_positive_point_estimate_with_negative_lower_bound(tmp_path) -> None:
+    registry = ModelRegistry(tmp_path)
+    record = registry.register(_model(29), _metrics())
+    registry.record_holdout_evaluation(
+        record.version,
+        dataset_path="sealed-holdout.jsonl",
+        dataset_sha256="holdout-sha",
+        metadata_sha256="metadata-sha",
+        split_id="split-1",
+        report_path="holdout-report.json",
+        report_sha256="report-sha",
+        metrics={
+            "observations": 500,
+            "net_return": 0.10,
+            "sharpe": 1.0,
+            "max_drawdown": 0.05,
+            "excess_return_vs_benchmark": 0.03,
+            "net_return_lower_bound": -0.02,
+            "excess_return_lower_bound": -0.01,
+        },
+        diagnostics={},
+        frozen_configuration={},
+    )
+
+    with pytest.raises(ValueError) as raised:
+        registry.promote(
+            record.version,
+            minimum_holdout_net_return_lower_bound=0.0,
+            minimum_holdout_excess_return_lower_bound=0.0,
+        )
+
+    message = str(raised.value)
+    assert "holdout_net_return_lower_bound_below_gate" in message
+    assert "holdout_excess_return_lower_bound_below_gate" in message
+
+
+def test_synthetic_fixture_can_still_be_promoted_for_pipeline_diagnostics(tmp_path) -> None:
+    registry = ModelRegistry(tmp_path)
+    record = registry.register(
+        _model(31),
+        _metrics(),
+        metadata={"dataset": "synthetic_fixture"},
+    )
+
+    promoted = registry.promote(record.version)
+
+    assert promoted.version == record.version
+    event = registry.history(alias="champion")[-1]
+    assert event["details"]["promotion_gates"]["synthetic_holdout_waiver"] is True
