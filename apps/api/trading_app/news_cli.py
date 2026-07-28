@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .domain import NewsEvent
 from .entities import EntityCatalog
-from .news_intelligence import NewsIntelligence
+from .point_in_time_news import PointInTimeNewsIntelligence
 
 
 def reclassify_news(
@@ -24,7 +24,7 @@ def reclassify_news(
         raise ValueError("Input and output paths must differ so the source archive remains immutable")
 
     catalog = EntityCatalog.load(catalog_path)
-    intelligence = NewsIntelligence(
+    intelligence = PointInTimeNewsIntelligence(
         entity_catalog=catalog,
         drop_exact_duplicates=False,
     )
@@ -106,11 +106,13 @@ def reclassify_news(
             "event_ids_preserved": True,
             "event_time_preserved": True,
             "knowledge_time_preserved": True,
+            "catalog_relationships_filtered_by_knowledge_time": True,
             "source_archive_overwritten": False,
         },
         "limitations": [
             "Reclassification can use only headline and summary text already present in the source archive.",
             "Relationships are linked only from the explicit catalog; co-mentions do not create relationships.",
+            "Undated catalog relationships are treated as active for the full archive.",
             "A new historical backfill is required to recover ticker copies lost by older cross-symbol deduplication.",
             "Deterministic extraction is an auditable baseline, not a substitute for labelled NLP evaluation.",
         ],
