@@ -22,12 +22,12 @@ class Portfolio:
         self._last_price[quote.symbol] = quote.mid
 
     def rollover_session(self, as_of: datetime) -> bool:
-        """Reset daily controls once when the market-data date changes."""
+        """Reset daily controls once when market-data dates advance."""
         session_date = as_of.date()
         if self._session_date is None:
             self._session_date = session_date
             return False
-        if session_date == self._session_date:
+        if session_date <= self._session_date:
             return False
         equity = self._current_equity()
         self._session_date = session_date
