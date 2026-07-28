@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import date, datetime
 
 from .domain import Fill, PortfolioSnapshot, Position, Quote, Side
 
@@ -15,9 +16,25 @@ class Portfolio:
         self.trades_today = 0
         self.day_start_equity = starting_cash
         self.peak_equity = starting_cash
+        self._session_date: date | None = None
 
     def mark(self, quote: Quote) -> None:
         self._last_price[quote.symbol] = quote.mid
+
+    def rollover_session(self, as_of: datetime) -> bool:
+        """Reset daily controls once when the market-data date changes."""
+        session_date = as_of.date()
+        if self._session_date is None:
+            self._session_date = session_date
+            return False
+        if session_date == self._session_date:
+            return False
+        equity = self._current_equity()
+        self._session_date = session_date
+        self.day_start_equity = equity
+        self.trades_today = 0
+        self.peak_equity = max(self.peak_equity, equity)
+        return True
 
     def apply_fill(self, fill: Fill) -> None:
         symbol = fill.symbol
@@ -43,6 +60,12 @@ class Portfolio:
 
     def position_value(self, symbol: str) -> float:
         return self._quantity.get(symbol, 0.0) * self._last_price.get(symbol, 0.0)
+
+    def _current_equity(self) -> float:
+        return self.cash + sum(
+            quantity * self._last_price.get(symbol, self._average_price[symbol])
+            for symbol, quantity in self._quantity.items()
+        )
 
     def snapshot(self) -> PortfolioSnapshot:
         positions = [
