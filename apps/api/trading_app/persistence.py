@@ -72,6 +72,17 @@ class SQLiteEventSink:
             )
             self._connection.commit()
 
+    @staticmethod
+    def _decode(row: sqlite3.Row) -> dict[str, object]:
+        return {
+            "id": row["id"],
+            "kind": row["kind"],
+            "event_time": row["event_time"],
+            "knowledge_time": row["knowledge_time"],
+            "payload": json.loads(row["payload"]),
+            "created_at": row["created_at"],
+        }
+
     def recent(self, kind: str | None = None, limit: int = 100) -> list[dict[str, object]]:
         if limit <= 0:
             return []
@@ -85,17 +96,34 @@ class SQLiteEventSink:
                     "SELECT * FROM event_ledger WHERE kind = ? ORDER BY id DESC LIMIT ?",
                     (kind, limit),
                 ).fetchall()
-        return [
-            {
-                "id": row["id"],
-                "kind": row["kind"],
-                "event_time": row["event_time"],
-                "knowledge_time": row["knowledge_time"],
-                "payload": json.loads(row["payload"]),
-                "created_at": row["created_at"],
-            }
-            for row in rows
-        ]
+        return [self._decode(row) for row in rows]
+
+    def scan(
+        self,
+        *,
+        kind: str | None = None,
+        after_id: int = 0,
+        limit: int = 10_000,
+    ) -> list[dict[str, object]]:
+        """Read deterministic insertion order for replay and integrity audits."""
+        if limit <= 0:
+            return []
+        with self._lock:
+            if kind is None:
+                rows = self._connection.execute(
+                    "SELECT * FROM event_ledger WHERE id > ? ORDER BY id ASC LIMIT ?",
+                    (after_id, limit),
+                ).fetchall()
+            else:
+                rows = self._connection.execute(
+                    """
+                    SELECT * FROM event_ledger
+                    WHERE id > ? AND kind = ?
+                    ORDER BY id ASC LIMIT ?
+                    """,
+                    (after_id, kind, limit),
+                ).fetchall()
+        return [self._decode(row) for row in rows]
 
     def count(self, kind: str | None = None) -> int:
         with self._lock:

@@ -2,7 +2,7 @@
 
 A private, risk-first AI-assisted paper-trading platform. It ingests market data and breaking stock news, turns those events into explainable signals, applies deterministic portfolio controls, simulates execution, and streams every decision to a live dashboard.
 
-> **Status:** functional paper-trading, data-ingestion, and research foundation. It defaults to a deterministic demo feed and an internal paper broker, so it can run safely without credentials. Alpaca paper trading and real-time market/news adapters are included behind configuration flags.
+> **Status:** functional paper-trading, data-ingestion, research, and operations foundation. It defaults to a deterministic demo feed and an internal paper broker, so it can run safely without credentials. Alpaca paper trading and real-time market/news adapters are included behind configuration flags.
 
 ## What is included
 
@@ -15,11 +15,15 @@ A private, risk-first AI-assisted paper-trading platform. It ingests market data
 - Explainable signal engine and news catalyst scoring
 - Non-bypassable risk engine with kill switch, exposure, drawdown, confidence, and stale-data controls
 - Conservative internal paper broker with spread and slippage
-- Optional Alpaca paper order adapter and official market/news stream configuration
+- Alpaca paper adapter that waits for actual filled quantity and average price instead of booking estimated fills
+- Broker-position reconciliation endpoint and execution-error audit events
+- Protected state-changing controls through an optional API key
+- Live feed-age diagnostics and stale-symbol reporting
 - Live event ledger backed by an append-only SQLite journal using `event_time` and `knowledge_time`
+- Deterministic ledger replay/integrity audit command
 - Cost-aware backtests, walk-forward validation, a trainable return model, and a versioned champion registry
-- Next.js live dashboard showing portfolio, decisions, news, positions, orders, and system state
-- Tests for risk, fills, persistence, research, data pagination, SEC parsing, news enrichment, model promotion, and leakage boundaries
+- Next.js live dashboard showing portfolio, decisions, news, positions, feed health, incidents, and system state
+- Tests for risk, fills, persistence, research, provider pagination, SEC parsing, news enrichment, model promotion, reconciliation, and leakage boundaries
 - Docker Compose and GitHub Actions CI
 - Architecture, security, and production roadmap documentation
 
@@ -31,7 +35,7 @@ The model never sends an order directly. The flow is always:
 market/news -> features -> strategy proposal -> risk engine -> paper broker -> audit ledger
 ```
 
-Any stale feed, kill switch, daily-loss breach, drawdown breach, oversized position, excessive spread, duplicate signal, or low-confidence proposal fails closed.
+Any stale feed, kill switch, daily-loss breach, drawdown breach, oversized position, excessive spread, duplicate signal, low-confidence proposal, broker rejection, or fill timeout fails closed.
 
 ## Quick start
 
@@ -63,6 +67,16 @@ Open `http://localhost:3000`.
 docker compose up --build
 ```
 
+## Operator security
+
+For any deployment beyond a trusted local machine, configure a strong control key:
+
+```dotenv
+TRADING_CONTROL_API_KEY=replace-with-a-long-random-secret
+```
+
+The kill-switch, pause, and resume endpoints then require `X-Trading-API-Key`. Docker passes the value into the single-user dashboard build so its controls continue to work. Because browser-visible environment variables are not secret from someone who can access that dashboard, internet-facing deployments should put the dashboard behind authentication and use a server-side proxy for control actions.
+
 ## Alpaca paper and data mode
 
 Create paper credentials and configure:
@@ -76,6 +90,14 @@ ALPACA_TRADING_BASE_URL=https://paper-api.alpaca.markets
 ALPACA_DATA_BASE_URL=https://data.alpaca.markets
 ALPACA_DATA_STREAM_URL=wss://stream.data.alpaca.markets/v2/iex
 ALPACA_NEWS_STREAM_URL=wss://stream.data.alpaca.markets/v1beta1/news
+TRADING_ORDER_FILL_TIMEOUT_SECONDS=15
+TRADING_ORDER_POLL_INTERVAL_SECONDS=0.25
+```
+
+The paper adapter submits an order, polls until the broker reports an actual fill, uses the broker’s filled quantity and average price, and cancels an unfilled remainder on timeout. Check internal-versus-broker quantities with:
+
+```text
+GET /v1/reconciliation
 ```
 
 The application intentionally does not support live-money execution. Adding it requires a separate adapter, explicit configuration, and a production-readiness review.
@@ -115,6 +137,16 @@ Then query recent authoritative filings through:
 GET /v1/sec/320193/filings?forms=10-K,10-Q,8-K&limit=25
 ```
 
+## Ledger audit
+
+Replay the append-only journal and validate proposal, risk-decision, order, and fill relationships:
+
+```bash
+trading-research audit-ledger --database .trading/events.db
+```
+
+The report flags orphan fills, orders without risk decisions, orders attached to rejected proposals, duplicate IDs, and approved proposals that never reached order creation.
+
 ## Repository layout
 
 ```text
@@ -150,11 +182,11 @@ The default strategy is deliberately simple and explainable. It combines short-t
 
 ## Next production milestones
 
-1. Deterministic replay from the durable event ledger and a full historical quote dataset
+1. Full deterministic strategy replay from historical quote/news streams
 2. Issuer/subsidiary/supplier entity linking and higher-capacity financial NLP extraction
 3. Higher-capacity champion/challenger models and experiment tracking
-4. Broker trade-update reconciliation and more realistic partial-fill/impact models
-5. Authentication, alerts, backups, and deployment hardening
+4. Streaming broker trade updates, queue/partial-fill simulation, and automatic reconciliation alerts
+5. Server-side user authentication, encrypted backups, and deployment runbooks
 6. Sixty to ninety live paper-trading days before any discussion of real funds
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md).

@@ -28,16 +28,23 @@ type Summary = {
   engine_running: boolean;
   active_strategy: string;
   symbols: string[];
+  feed_health: {
+    healthy: boolean;
+    stale_symbols: string[];
+    quote_age_seconds: Record<string, number>;
+  };
   recent: {
     news: LedgerItem[];
     proposals: LedgerItem[];
     decisions: LedgerItem[];
     orders: LedgerItem[];
     fills: LedgerItem[];
+    system_events: LedgerItem[];
   };
 };
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const CONTROL_KEY = process.env.NEXT_PUBLIC_CONTROL_API_KEY;
 const money = new Intl.NumberFormat("en-PL", {
   style: "currency",
   currency: "USD",
@@ -91,11 +98,17 @@ export default function Dashboard() {
   );
 
   async function setKillSwitch(enabled: boolean) {
-    await fetch(`${API}/v1/control/kill-switch`, {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (CONTROL_KEY) headers["X-Trading-API-Key"] = CONTROL_KEY;
+    const response = await fetch(`${API}/v1/control/kill-switch`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ enabled }),
     });
+    if (!response.ok) {
+      setError(`Control request failed with ${response.status}`);
+      return;
+    }
     await refresh();
   }
 
@@ -110,6 +123,7 @@ export default function Dashboard() {
   }
 
   const portfolio = summary.portfolio;
+  const latestIncident = summary.recent.system_events[0];
   return (
     <main className="shell">
       <header className="header">
@@ -121,8 +135,10 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="headerActions">
-          <span className={`status ${connected ? "good" : "bad"}`}>
-            {connected ? "Live" : "Disconnected"}
+          <span
+            className={`status ${connected && summary.feed_health.healthy ? "good" : "bad"}`}
+          >
+            {connected && summary.feed_health.healthy ? "Live" : "Degraded"}
           </span>
           <button
             className={summary.kill_switch ? "danger active" : "danger"}
@@ -136,6 +152,11 @@ export default function Dashboard() {
       </header>
 
       {error && <div className="alert">{error}</div>}
+      {latestIncident && (
+        <div className="alert">
+          {value(latestIncident, "type")}: {value(latestIncident, "payload")}
+        </div>
+      )}
 
       <section className="metrics">
         <Metric label="Portfolio equity" value={money.format(portfolio.equity)} />
@@ -260,6 +281,14 @@ export default function Dashboard() {
             <div>
               <dt>Strategy</dt>
               <dd>{summary.active_strategy}</dd>
+            </div>
+            <div>
+              <dt>Data feed</dt>
+              <dd>{summary.feed_health.healthy ? "healthy" : "stale"}</dd>
+            </div>
+            <div>
+              <dt>Stale symbols</dt>
+              <dd>{summary.feed_health.stale_symbols.join(", ") || "none"}</dd>
             </div>
             <div>
               <dt>Kill switch</dt>

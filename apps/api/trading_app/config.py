@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     trading_max_spread_bps: float = 35.0
     trading_max_data_age_seconds: int = 30
     trading_max_trades_per_day: int = 10
+    trading_order_fill_timeout_seconds: float = 15.0
+    trading_order_poll_interval_seconds: float = 0.25
+    trading_control_api_key: str | None = None
     trading_database_path: str = ".trading/events.db"
     trading_strategy_mode: Literal["explainable", "champion"] = "explainable"
     trading_model_registry_path: str = ".trading/models"

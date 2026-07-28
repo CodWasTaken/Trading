@@ -12,8 +12,9 @@ services:
   dashboard:
     build:
       context: apps/dashboard
-    environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+        NEXT_PUBLIC_CONTROL_API_KEY: ${TRADING_CONTROL_API_KEY:-}
     ports:
       - "3000:3000"
     depends_on:

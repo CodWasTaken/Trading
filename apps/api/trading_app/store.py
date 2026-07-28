@@ -4,6 +4,7 @@ import asyncio
 from collections import deque
 from collections.abc import AsyncIterator
 from copy import deepcopy
+from datetime import UTC, datetime
 
 from .domain import Fill, LiveEvent, NewsEvent, Order, Quote, RiskDecision, SignalProposal
 from .persistence import EventSink
@@ -23,6 +24,7 @@ class EventStore:
         self.decisions: deque[RiskDecision] = deque(maxlen=max_events)
         self.orders: deque[Order] = deque(maxlen=max_events)
         self.fills: deque[Fill] = deque(maxlen=max_events)
+        self.system_events: deque[LiveEvent] = deque(maxlen=max_events)
         self.live_events: deque[LiveEvent] = deque(maxlen=max_events)
         self._subscribers: set[asyncio.Queue[LiveEvent]] = set()
         self._lock = asyncio.Lock()
@@ -74,6 +76,12 @@ class EventStore:
             self.fills.appendleft(item)
         await self.publish(LiveEvent(type="fill", payload=item.model_dump(mode="json")))
 
+    async def add_system_event(self, kind: str, payload: dict[str, object]) -> None:
+        event = LiveEvent(type=kind, payload=payload)
+        async with self._lock:
+            self.system_events.appendleft(event)
+        await self.publish(event)
+
     async def subscribe(self) -> AsyncIterator[LiveEvent]:
         queue: asyncio.Queue[LiveEvent] = asyncio.Queue(maxsize=200)
         self._subscribers.add(queue)
@@ -82,6 +90,22 @@ class EventStore:
                 yield await queue.get()
         finally:
             self._subscribers.discard(queue)
+
+    async def health(self, maximum_age_seconds: int) -> dict[str, object]:
+        now = datetime.now(UTC)
+        async with self._lock:
+            quote_ages = {
+                symbol: max(0.0, (now - quote.knowledge_time).total_seconds())
+                for symbol, quote in self.quotes.items()
+            }
+        stale = sorted(
+            symbol for symbol, age in quote_ages.items() if age > maximum_age_seconds
+        )
+        return {
+            "quote_age_seconds": quote_ages,
+            "stale_symbols": stale,
+            "healthy": bool(quote_ages) and not stale,
+        }
 
     async def snapshot(self) -> dict[str, object]:
         async with self._lock:
@@ -92,6 +116,9 @@ class EventStore:
                 "decisions": [x.model_dump(mode="json") for x in list(self.decisions)[:100]],
                 "orders": [x.model_dump(mode="json") for x in list(self.orders)[:100]],
                 "fills": [x.model_dump(mode="json") for x in list(self.fills)[:100]],
+                "system_events": [
+                    x.model_dump(mode="json") for x in list(self.system_events)[:100]
+                ],
             }
 
     async def recent_news_for(self, symbol: str, limit: int = 10) -> list[NewsEvent]:

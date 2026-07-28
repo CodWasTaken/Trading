@@ -55,7 +55,21 @@ class TradingEngine:
             requested_price=quote.ask if proposal.side.value == "buy" else quote.bid,
         )
         await self.store.add_order(order)
-        fill = await self.broker.execute(order, quote)
+        try:
+            fill = await self.broker.execute(order, quote)
+        except Exception as error:
+            await self.store.add_system_event(
+                "execution_error",
+                {
+                    "order_id": str(order.id),
+                    "proposal_id": str(proposal.id),
+                    "symbol": order.symbol,
+                    "side": order.side.value,
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                },
+            )
+            return
         self.portfolio.apply_fill(fill)
         await self.store.add_fill(fill)
 

@@ -9,6 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from .auth import require_control_api_key
 from .broker import AlpacaPaperBroker, InternalPaperBroker
 from .config import Settings, get_settings
 from .engine import TradingEngine
@@ -34,7 +35,7 @@ class AppState:
         self.store = EventStore(sink=self.event_sink)
         self.portfolio = Portfolio(settings.trading_starting_cash)
         self.risk = RiskEngine(settings)
-        broker = (
+        self.broker = (
             AlpacaPaperBroker(settings)
             if settings.trading_execution_mode == "alpaca-paper"
             else InternalPaperBroker()
@@ -57,7 +58,7 @@ class AppState:
             portfolio=self.portfolio,
             risk=self.risk,
             strategy=strategy,
-            broker=broker,
+            broker=self.broker,
         )
         self.engine_task: asyncio.Task[None] | None = None
 
@@ -83,16 +84,18 @@ async def lifespan(_: FastAPI):
         yield
     finally:
         await state.engine.stop()
-        state.event_sink.close()
         if state.engine_task:
             state.engine_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await state.engine_task
+        if isinstance(state.broker, AlpacaPaperBroker):
+            await state.broker.close()
+        state.event_sink.close()
 
 
 app = FastAPI(
     title="Trading Platform API",
-    version="0.3.0",
+    version="0.4.0",
     description="Risk-first AI-assisted paper trading API",
     lifespan=lifespan,
 )
@@ -114,14 +117,18 @@ StateDependency = Annotated[AppState, Depends(get_state)]
 
 @app.get("/health")
 async def health(current: StateDependency) -> dict[str, object]:
+    feed_health = await current.store.health(
+        current.settings.trading_max_data_age_seconds
+    )
     return {
-        "status": "ok",
+        "status": "ok" if feed_health["healthy"] else "degraded",
         "environment": current.settings.trading_env,
         "demo_mode": current.settings.trading_demo_mode,
         "execution_mode": current.settings.trading_execution_mode,
         "engine_running": current.engine.running,
         "kill_switch": current.risk.kill_switch,
         "active_strategy": current.active_strategy,
+        "feed": feed_health,
     }
 
 
@@ -129,6 +136,9 @@ async def health(current: StateDependency) -> dict[str, object]:
 async def dashboard_summary(current: StateDependency) -> dict[str, object]:
     portfolio = current.portfolio.snapshot()
     ledger = await current.store.snapshot()
+    feed_health = await current.store.health(
+        current.settings.trading_max_data_age_seconds
+    )
     return {
         "portfolio": portfolio.model_dump(mode="json"),
         "kill_switch": current.risk.kill_switch,
@@ -136,6 +146,7 @@ async def dashboard_summary(current: StateDependency) -> dict[str, object]:
         "symbols": current.settings.trading_symbols,
         "active_strategy": current.active_strategy,
         "model_registry": current.model_registry.summary(),
+        "feed_health": feed_health,
         "recent": ledger,
     }
 
@@ -153,6 +164,37 @@ async def events(current: StateDependency) -> dict[str, object]:
 @app.get("/v1/models")
 async def models(current: StateDependency) -> dict[str, object]:
     return current.model_registry.summary()
+
+
+@app.get("/v1/reconciliation")
+async def reconciliation(current: StateDependency) -> dict[str, object]:
+    if not isinstance(current.broker, AlpacaPaperBroker):
+        return {
+            "mode": "internal-paper",
+            "status": "not_applicable",
+            "differences": [],
+        }
+    broker_positions = await current.broker.get_positions()
+    internal = {
+        position.symbol: position.quantity
+        for position in current.portfolio.snapshot().positions
+    }
+    external = {position.symbol: position.quantity for position in broker_positions}
+    differences = [
+        {
+            "symbol": symbol,
+            "internal_quantity": internal.get(symbol, 0.0),
+            "broker_quantity": external.get(symbol, 0.0),
+            "difference": internal.get(symbol, 0.0) - external.get(symbol, 0.0),
+        }
+        for symbol in sorted(set(internal) | set(external))
+        if abs(internal.get(symbol, 0.0) - external.get(symbol, 0.0)) > 1e-8
+    ]
+    return {
+        "mode": "alpaca-paper",
+        "status": "matched" if not differences else "mismatch",
+        "differences": differences,
+    }
 
 
 @app.get("/v1/sec/{cik}/filings")
@@ -184,7 +226,10 @@ async def sec_filings(
     }
 
 
-@app.post("/v1/control/kill-switch")
+@app.post(
+    "/v1/control/kill-switch",
+    dependencies=[Depends(require_control_api_key)],
+)
 async def kill_switch(
     request: ControlRequest, current: StateDependency
 ) -> dict[str, bool]:
@@ -192,13 +237,19 @@ async def kill_switch(
     return {"kill_switch": current.risk.kill_switch}
 
 
-@app.post("/v1/control/pause")
+@app.post(
+    "/v1/control/pause",
+    dependencies=[Depends(require_control_api_key)],
+)
 async def pause(current: StateDependency) -> dict[str, bool]:
     await current.engine.stop()
     return {"engine_running": current.engine.running}
 
 
-@app.post("/v1/control/resume")
+@app.post(
+    "/v1/control/resume",
+    dependencies=[Depends(require_control_api_key)],
+)
 async def resume(current: StateDependency) -> dict[str, bool]:
     if current.engine.running:
         return {"engine_running": True}

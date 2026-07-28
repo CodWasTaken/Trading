@@ -6,6 +6,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .audit import audit_ledger
 from .config import get_settings
 from .historical import AlpacaHistoricalClient
 from .model_registry import ModelRegistry
@@ -65,9 +66,7 @@ async def backfill(
     try:
         with destination.open("w", encoding="utf-8") as handle:
             if kind == "bars":
-                iterator = client.iter_bars(
-                    symbols, start, end, timeframe=timeframe
-                )
+                iterator = client.iter_bars(symbols, start, end, timeframe=timeframe)
             else:
                 iterator = client.iter_news(symbols, start, end)
             async for item in iterator:
@@ -87,7 +86,7 @@ async def backfill(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Trading data, research, and model registry tools"
+        description="Trading data, research, registry, and audit tools"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     train = subparsers.add_parser(
@@ -109,6 +108,11 @@ def build_parser() -> argparse.ArgumentParser:
     history.add_argument("--end", required=True, help="ISO-8601 timestamp")
     history.add_argument("--output", required=True)
     history.add_argument("--timeframe", default="1Min")
+
+    audit = subparsers.add_parser(
+        "audit-ledger", help="Replay event relationships and report integrity failures"
+    )
+    audit.add_argument("--database", default=".trading/events.db")
     return parser
 
 
@@ -128,6 +132,8 @@ def main() -> None:
                 arguments.timeframe,
             )
         )
+    elif arguments.command == "audit-ledger":
+        result = audit_ledger(arguments.database).to_dict()
     else:
         result = ModelRegistry(arguments.registry).summary()
     print(json.dumps(result, indent=2, sort_keys=True))
