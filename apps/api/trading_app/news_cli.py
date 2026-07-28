@@ -9,6 +9,11 @@ from pathlib import Path
 from .domain import NewsEvent
 from .entities import EntityCatalog
 from .news_evaluation import build_label_set, evaluate_label_set
+from .news_review import (
+    adjudicate_label_sets,
+    assign_reviewer_packets,
+    review_agreement,
+)
 from .point_in_time_news import PointInTimeNewsIntelligence
 
 
@@ -153,6 +158,38 @@ def build_parser() -> argparse.ArgumentParser:
     sample.add_argument("--seed", default="news-evaluation-v1")
     sample.add_argument("--metadata", help="Optional label-set metadata JSON path")
 
+    assign = subparsers.add_parser(
+        "assign-reviewers",
+        help="Create balanced independent reviewer packets from a pending label template",
+    )
+    assign.add_argument("--labels", required=True, help="Untouched pending label-set CSV")
+    assign.add_argument("--output-dir", required=True)
+    assign.add_argument(
+        "--reviewers",
+        required=True,
+        help="Comma-separated unique reviewer names",
+    )
+    assign.add_argument("--reviews-per-item", type=int, default=2)
+    assign.add_argument("--seed", default="news-review-assignment-v1")
+    assign.add_argument("--report", help="Optional assignment report JSON path")
+
+    agreement = subparsers.add_parser(
+        "review-agreement",
+        help="Measure inter-annotator agreement across independent reviewer CSVs",
+    )
+    agreement.add_argument("--labels", nargs="+", required=True, help="Reviewer CSV files")
+    agreement.add_argument("--output", required=True, help="Agreement report JSON")
+    agreement.add_argument("--require-complete", action="store_true")
+
+    adjudicate = subparsers.add_parser(
+        "adjudicate-labels",
+        help="Create a unanimous-only consensus CSV and retain disputes for human review",
+    )
+    adjudicate.add_argument("--labels", nargs="+", required=True, help="Reviewer CSV files")
+    adjudicate.add_argument("--output", required=True, help="Consensus/adjudication CSV")
+    adjudicate.add_argument("--minimum-reviewers", type=int, default=2)
+    adjudicate.add_argument("--report", help="Optional adjudication report JSON")
+
     evaluate = subparsers.add_parser(
         "evaluate-labels",
         help="Measure event and entity precision/recall from a reviewed label-set CSV",
@@ -183,6 +220,28 @@ def main() -> None:
             minimum_per_stratum=arguments.minimum_per_stratum,
             seed=arguments.seed,
             metadata_path=arguments.metadata,
+        )
+    elif arguments.command == "assign-reviewers":
+        result = assign_reviewer_packets(
+            arguments.labels,
+            arguments.output_dir,
+            [part.strip() for part in arguments.reviewers.split(",")],
+            reviews_per_item=arguments.reviews_per_item,
+            seed=arguments.seed,
+            report_path=arguments.report,
+        )
+    elif arguments.command == "review-agreement":
+        result = review_agreement(
+            arguments.labels,
+            arguments.output,
+            require_complete=arguments.require_complete,
+        )
+    elif arguments.command == "adjudicate-labels":
+        result = adjudicate_label_sets(
+            arguments.labels,
+            arguments.output,
+            minimum_reviewers=arguments.minimum_reviewers,
+            report_path=arguments.report,
         )
     else:
         result = evaluate_label_set(
