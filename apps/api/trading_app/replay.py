@@ -6,11 +6,12 @@ from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from itertools import groupby
 from typing import Any
 
 from .broker import InternalPaperBroker
 from .config import Settings
-from .domain import DecisionStatus, LiveEvent, NewsEvent, Quote
+from .domain import DecisionStatus, LiveEvent, NewsEvent, Quote, Side
 from .engine import TradingEngine
 from .historical import HistoricalBar
 from .portfolio import Portfolio
@@ -34,6 +35,7 @@ class ReplayClock:
 class ReplayResult:
     report: dict[str, object]
     trace: list[dict[str, object]]
+    equity_curve: list[dict[str, object]]
 
 
 def quote_from_bar(
@@ -69,6 +71,7 @@ async def run_historical_replay(
     bar_interval: timedelta,
     spread_bps: float = 10.0,
     slippage_bps: float = 2.0,
+    signal_threshold: float | None = None,
     source_metadata: dict[str, object] | None = None,
 ) -> ReplayResult:
     if not bars:
@@ -95,7 +98,11 @@ async def run_historical_replay(
             item.headline,
         ),
     )
-    first_time = ordered_bars[0].timestamp.astimezone(UTC) + bar_interval
+    quotes = [
+        quote_from_bar(bar, bar_interval=bar_interval, spread_bps=spread_bps)
+        for bar in ordered_bars
+    ]
+    first_time = quotes[0].knowledge_time
     clock = ReplayClock(first_time)
     maximum_events = max(2_000, (len(ordered_bars) + len(ordered_news)) * 8 + 100)
     store = EventStore(max_events=maximum_events)
@@ -112,31 +119,34 @@ async def run_historical_replay(
     news_cursor = 0
     maximum_drawdown = 0.0
     peak_equity = settings.trading_starting_cash
-    equity_points = 0
-    for bar in ordered_bars:
-        quote = quote_from_bar(
-            bar,
-            bar_interval=bar_interval,
-            spread_bps=spread_bps,
-        )
-        clock.set(quote.knowledge_time)
+    equity_curve: list[dict[str, object]] = []
+    for timestamp, timestamp_quotes_iter in groupby(
+        quotes, key=lambda item: item.knowledge_time
+    ):
+        clock.set(timestamp)
         while (
             news_cursor < len(ordered_news)
-            and ordered_news[news_cursor].knowledge_time <= quote.knowledge_time
+            and ordered_news[news_cursor].knowledge_time <= timestamp
         ):
             await engine.process_news(ordered_news[news_cursor])
             news_cursor += 1
-        await engine.process_quote(quote)
+        for quote in timestamp_quotes_iter:
+            await engine.process_quote(quote)
         snapshot = portfolio.snapshot()
         peak_equity = max(peak_equity, snapshot.equity)
-        if peak_equity > 0:
-            maximum_drawdown = max(
-                maximum_drawdown,
-                (peak_equity - snapshot.equity) / peak_equity,
-            )
-        equity_points += 1
+        drawdown = (
+            0.0 if peak_equity <= 0 else (peak_equity - snapshot.equity) / peak_equity
+        )
+        maximum_drawdown = max(maximum_drawdown, drawdown)
+        equity_curve.append(
+            {
+                "timestamp": timestamp.isoformat(),
+                "equity": snapshot.equity,
+                "drawdown": drawdown,
+            }
+        )
 
-    final_time = ordered_bars[-1].timestamp.astimezone(UTC) + bar_interval
+    final_time = quotes[-1].knowledge_time
     final_snapshot = portfolio.snapshot()
     final_portfolio = final_snapshot.model_dump(mode="json")
     final_portfolio["as_of"] = final_time.isoformat()
@@ -156,9 +166,46 @@ async def run_historical_replay(
         if decision.status == DecisionStatus.REJECTED:
             rejection_reasons.update(decision.reasons)
 
+    proposal_event_types = {
+        str(proposal.id): str(
+            proposal.feature_snapshot.get("news_event_type", "unclassified")
+        )
+        for proposal in store.proposals
+    }
+    event_type_activity: dict[str, dict[str, float | int]] = defaultdict(
+        lambda: {
+            "proposals": 0,
+            "approved_or_resized": 0,
+            "rejected": 0,
+            "fills": 0,
+            "filled_notional": 0.0,
+        }
+    )
+    for proposal in store.proposals:
+        event_type = proposal_event_types[str(proposal.id)]
+        event_type_activity[event_type]["proposals"] = int(
+            event_type_activity[event_type]["proposals"]
+        ) + 1
+    for decision in store.decisions:
+        event_type = proposal_event_types.get(str(decision.proposal_id), "unclassified")
+        key = (
+            "rejected"
+            if decision.status == DecisionStatus.REJECTED
+            else "approved_or_resized"
+        )
+        event_type_activity[event_type][key] = int(
+            event_type_activity[event_type][key]
+        ) + 1
+
+    order_event_types = {
+        str(order.id): proposal_event_types.get(str(order.proposal_id), "unclassified")
+        for order in store.orders
+    }
     fills_by_symbol: dict[str, dict[str, float | int]] = defaultdict(
         lambda: {"fills": 0, "notional": 0.0}
     )
+    symbol_cashflow: dict[str, float] = defaultdict(float)
+    symbol_quantity: dict[str, float] = defaultdict(float)
     traded_notional = 0.0
     for fill in store.fills:
         notional = fill.quantity * fill.price
@@ -169,10 +216,28 @@ async def run_historical_replay(
         fills_by_symbol[fill.symbol]["notional"] = float(
             fills_by_symbol[fill.symbol]["notional"]
         ) + notional
+        direction = -1.0 if fill.side == Side.BUY else 1.0
+        symbol_cashflow[fill.symbol] += direction * notional
+        symbol_quantity[fill.symbol] += (
+            fill.quantity if fill.side == Side.BUY else -fill.quantity
+        )
+        event_type = order_event_types.get(str(fill.order_id), "unclassified")
+        event_type_activity[event_type]["fills"] = int(
+            event_type_activity[event_type]["fills"]
+        ) + 1
+        event_type_activity[event_type]["filled_notional"] = float(
+            event_type_activity[event_type]["filled_notional"]
+        ) + notional
 
+    pnl_by_symbol = {
+        symbol: symbol_cashflow[symbol]
+        + symbol_quantity[symbol] * store.quotes[symbol].mid
+        for symbol in sorted(symbol_cashflow)
+        if symbol in store.quotes
+    }
     starting_cash = settings.trading_starting_cash
     report: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "replay_kind": "shared_engine_historical_replay",
         "strategy": strategy_name,
         "symbols": symbols,
@@ -189,6 +254,7 @@ async def run_historical_replay(
             "bar_interval_seconds": bar_interval.total_seconds(),
             "synthetic_spread_bps": spread_bps,
             "slippage_bps": slippage_bps,
+            "signal_threshold": signal_threshold,
             "max_position_pct": settings.trading_max_position_pct,
             "max_gross_exposure_pct": settings.trading_max_gross_exposure_pct,
             "max_daily_loss_pct": settings.trading_max_daily_loss_pct,
@@ -202,7 +268,8 @@ async def run_historical_replay(
             "net_return": final_snapshot.equity / starting_cash - 1,
             "maximum_drawdown": maximum_drawdown,
             "traded_notional": traded_notional,
-            "equity_points": equity_points,
+            "equity_points": len(equity_curve),
+            "pnl_by_symbol": pnl_by_symbol,
         },
         "final_portfolio": final_portfolio,
         "events": {
@@ -210,6 +277,10 @@ async def run_historical_replay(
             "risk_rejection_reasons": dict(sorted(rejection_reasons.items())),
             "fills_by_symbol": {
                 symbol: values for symbol, values in sorted(fills_by_symbol.items())
+            },
+            "event_type_activity": {
+                event_type: values
+                for event_type, values in sorted(event_type_activity.items())
             },
             "trace_events": len(trace),
             "trace_sha256": hashlib.sha256(trace_bytes).hexdigest(),
@@ -221,7 +292,7 @@ async def run_historical_replay(
             "Replay evidence is not evidence of future profitability and does not replace live paper validation.",
         ],
     }
-    return ReplayResult(report=report, trace=trace)
+    return ReplayResult(report=report, trace=trace, equity_curve=equity_curve)
 
 
 def _canonical_event(sequence: int, event: LiveEvent) -> dict[str, object]:

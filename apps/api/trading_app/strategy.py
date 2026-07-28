@@ -15,7 +15,17 @@ class Strategy(Protocol):
 class ExplainableCatalystStrategy:
     """Reference strategy for the vertical slice, not a production alpha claim."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        minimum_combined: float = 0.16,
+        repeat_combined: float = 0.30,
+    ) -> None:
+        if minimum_combined <= 0:
+            raise ValueError("minimum_combined must be positive")
+        if repeat_combined < minimum_combined:
+            raise ValueError("repeat_combined must not be below minimum_combined")
+        self.minimum_combined = minimum_combined
+        self.repeat_combined = repeat_combined
         self._prices: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=12))
         self._last_direction: dict[str, Side] = {}
 
@@ -38,17 +48,24 @@ class ExplainableCatalystStrategy:
             news_age_seconds = max(
                 0.0, (quote.knowledge_time - top.knowledge_time).total_seconds()
             )
+            news_event_type = top.event_type
+            news_source = top.source
         else:
             news_score = 0.0
             news_age_seconds = 999_999.0
+            news_event_type = "none"
+            news_source = "none"
 
         combined = 8.0 * momentum + 0.65 * news_score
         confidence = min(0.95, 0.50 + abs(combined))
-        if abs(combined) < 0.16:
+        if abs(combined) < self.minimum_combined:
             return None
 
         side = Side.BUY if combined > 0 else Side.SELL
-        if self._last_direction.get(quote.symbol) == side and abs(combined) < 0.30:
+        if (
+            self._last_direction.get(quote.symbol) == side
+            and abs(combined) < self.repeat_combined
+        ):
             return None
         self._last_direction[quote.symbol] = side
 
@@ -75,7 +92,10 @@ class ExplainableCatalystStrategy:
                 "momentum": momentum,
                 "news_score": news_score,
                 "news_age_seconds": news_age_seconds,
+                "news_event_type": news_event_type,
+                "news_source": news_source,
                 "spread_bps": quote.spread_bps,
                 "combined": combined,
+                "signal_threshold": self.minimum_combined,
             },
         )

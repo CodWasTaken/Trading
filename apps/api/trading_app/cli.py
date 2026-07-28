@@ -22,6 +22,7 @@ from .domain import NewsEvent
 from .historical import AlpacaHistoricalClient, HistoricalBar
 from .model_registry import ModelRegistry
 from .replay_cli import replay_history
+from .replay_diagnostics import build_replay_diagnostics
 from .research import (
     RidgeReturnModel,
     metrics_dict,
@@ -67,6 +68,13 @@ def parse_datetime(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def parse_float_csv(value: str) -> list[float]:
+    values = [float(part.strip()) for part in value.split(",") if part.strip()]
+    if not values:
+        raise ValueError("At least one numeric value is required")
+    return values
 
 
 async def backfill(
@@ -380,6 +388,43 @@ def build_parser() -> argparse.ArgumentParser:
     replay.add_argument("--spread-bps", type=float, default=10.0)
     replay.add_argument("--slippage-bps", type=float, default=2.0)
     replay.add_argument("--starting-cash", type=float)
+    replay.add_argument(
+        "--signal-threshold",
+        type=float,
+        help="Override 0.16 explainable combined-score or 0.0005 champion edge",
+    )
+
+    diagnostics = subparsers.add_parser(
+        "replay-report",
+        help="Run replay threshold, regime, sector, and event-type diagnostics",
+    )
+    diagnostics.add_argument("--bars", required=True, help="Historical bars JSON Lines")
+    diagnostics.add_argument("--news", required=True, help="Historical news JSON Lines")
+    diagnostics.add_argument("--output", required=True, help="Diagnostics report JSON")
+    diagnostics.add_argument(
+        "--strategy", choices=("explainable", "champion"), default="explainable"
+    )
+    diagnostics.add_argument("--registry", default=".trading/models")
+    diagnostics.add_argument("--allow-synthetic-champion", action="store_true")
+    diagnostics.add_argument("--verify-determinism", action="store_true")
+    diagnostics.add_argument("--bar-minutes", type=int, default=60)
+    diagnostics.add_argument("--spread-bps", type=float, default=10.0)
+    diagnostics.add_argument("--slippage-bps", type=float, default=2.0)
+    diagnostics.add_argument("--starting-cash", type=float)
+    diagnostics.add_argument(
+        "--thresholds",
+        default="0.08,0.12,0.16,0.20,0.24",
+        help="Comma-separated strategy thresholds; champion thresholds use return units",
+    )
+    diagnostics.add_argument("--reference-threshold", type=float)
+    diagnostics.add_argument(
+        "--sector-map",
+        help='Optional JSON object such as {"AAPL":"Technology"}',
+    )
+    diagnostics.add_argument("--regime-lookback", type=int, default=20)
+    diagnostics.add_argument(
+        "--regime-momentum-threshold", type=float, default=0.01
+    )
 
     audit = subparsers.add_parser(
         "audit-ledger", help="Replay event relationships and report integrity failures"
@@ -451,6 +496,28 @@ def main() -> None:
                 spread_bps=arguments.spread_bps,
                 slippage_bps=arguments.slippage_bps,
                 starting_cash=arguments.starting_cash,
+                signal_threshold=arguments.signal_threshold,
+            )
+        )
+    elif arguments.command == "replay-report":
+        result = asyncio.run(
+            build_replay_diagnostics(
+                arguments.bars,
+                arguments.news,
+                arguments.output,
+                strategy_mode=arguments.strategy,
+                registry_path=arguments.registry,
+                allow_synthetic_champion=arguments.allow_synthetic_champion,
+                verify_determinism=arguments.verify_determinism,
+                bar_minutes=arguments.bar_minutes,
+                spread_bps=arguments.spread_bps,
+                slippage_bps=arguments.slippage_bps,
+                starting_cash=arguments.starting_cash,
+                thresholds=parse_float_csv(arguments.thresholds),
+                reference_threshold=arguments.reference_threshold,
+                sector_map_path=arguments.sector_map,
+                regime_lookback=arguments.regime_lookback,
+                regime_momentum_threshold=arguments.regime_momentum_threshold,
             )
         )
     elif arguments.command == "audit-ledger":
