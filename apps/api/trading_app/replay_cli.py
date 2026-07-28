@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
+from datetime import timedelta
 from pathlib import Path
 from typing import TypeVar
 
@@ -77,8 +79,12 @@ async def replay_history(
     report["determinism_verified"] = False
     if verify_determinism:
         verification = await execute()
-        first_hash = str(dict(report["events"])["trace_sha256"])
-        second_hash = str(dict(verification.report["events"])["trace_sha256"])
+        first_events = report.get("events", {})
+        second_events = verification.report.get("events", {})
+        if not isinstance(first_events, dict) or not isinstance(second_events, dict):
+            raise RuntimeError("Replay report did not contain event diagnostics")
+        first_hash = str(first_events["trace_sha256"])
+        second_hash = str(second_events["trace_sha256"])
         if first_hash != second_hash:
             raise RuntimeError(
                 "Replay determinism verification failed: semantic trace hashes differ"
@@ -108,7 +114,7 @@ def _strategy_factory(
     registry_path: str,
     *,
     allow_synthetic_champion: bool,
-) -> tuple[callable[[], Strategy], str]:
+) -> tuple[Callable[[], Strategy], str]:
     if strategy_mode == "explainable":
         return ExplainableCatalystStrategy, "explainable"
     registry = ModelRegistry(registry_path)
@@ -161,9 +167,7 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _minutes(value: int):
-    from datetime import timedelta
-
+def _minutes(value: int) -> timedelta:
     if value <= 0:
         raise ValueError("bar_minutes must be positive")
     return timedelta(minutes=value)
