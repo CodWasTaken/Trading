@@ -73,6 +73,9 @@ Implemented foundation:
 - frozen-model one-time scoring per model-version and holdout hash
 - registry-backed holdout evaluation history
 - promotion gates requiring both calibration and untouched-holdout evidence
+- predeclared candidate-family budgets and Bonferroni adjustment
+- deterministic circular moving-block bootstrap confidence intervals
+- promotion gates on adjusted holdout net-return and benchmark-excess lower bounds
 
 Remaining production work:
 
@@ -80,7 +83,6 @@ Remaining production work:
 - independent experiment manifests and comparison reports
 - drift and calibration monitoring
 - several genuinely fresh holdout windows across regimes
-- statistical uncertainty and multiple-comparison controls
 
 **Exit gate:** the candidate improves risk-adjusted out-of-sample performance across several untouched windows and regimes.
 
