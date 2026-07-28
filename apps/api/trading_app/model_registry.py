@@ -71,6 +71,7 @@ class ModelRegistry:
         minimum_folds: int = 3,
         minimum_sharpe: float = 0.0,
         maximum_drawdown: float = 0.20,
+        minimum_observations: int = 100,
     ) -> ModelRecord:
         record = self.get(version)
         metrics = record.metrics
@@ -83,6 +84,8 @@ class ModelRegistry:
             failures.append("drawdown_above_gate")
         if int(metrics.get("folds", 0)) < minimum_folds:
             failures.append("insufficient_walk_forward_folds")
+        if int(metrics.get("observations", 0)) < minimum_observations:
+            failures.append("insufficient_out_of_sample_observations")
         if failures:
             raise ValueError("Model failed promotion gates: " + ", ".join(failures))
         index = self._read()
