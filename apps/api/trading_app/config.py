@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     trading_max_spread_bps: float = 35.0
     trading_max_data_age_seconds: int = 30
     trading_max_trades_per_day: int = 10
+    trading_database_path: str = ".trading/events.db"
+    trading_strategy_mode: Literal["explainable", "champion"] = "explainable"
+    trading_model_registry_path: str = ".trading/models"
     trading_cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:3000"]
     )
