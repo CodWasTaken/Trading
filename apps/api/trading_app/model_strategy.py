@@ -23,6 +23,8 @@ class ChampionModelStrategy:
             raise ValueError(
                 "Champion must include momentum, news_score, and volatility"
             )
+        if minimum_edge <= 0:
+            raise ValueError("minimum_edge must be positive")
         self.model = model
         self.minimum_edge = minimum_edge
         self._prices: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=20))
@@ -40,10 +42,13 @@ class ChampionModelStrategy:
         ]
         momentum = prices[-1] / prices[0] - 1
         volatility = pstdev(returns) if len(returns) > 1 else 0.0
+        relevant = news[:5]
         weighted_news = [
-            item.sentiment * item.novelty * item.source_quality for item in news[:5]
+            item.sentiment * item.novelty * item.source_quality for item in relevant
         ]
         news_score = sum(weighted_news) / len(weighted_news) if weighted_news else 0.0
+        news_event_type = relevant[0].event_type if relevant else "none"
+        news_source = relevant[0].source if relevant else "none"
         available_features = {
             "momentum": momentum,
             "news_score": news_score,
@@ -80,7 +85,10 @@ class ChampionModelStrategy:
             ],
             feature_snapshot={
                 **available_features,
+                "news_event_type": news_event_type,
+                "news_source": news_source,
                 "model_prediction": prediction,
+                "signal_threshold": self.minimum_edge,
                 "champion_model": True,
             },
         )
