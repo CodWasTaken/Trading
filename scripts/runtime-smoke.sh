@@ -156,7 +156,10 @@ wait_for_url() {
   return 1
 }
 
-unset ALPACA_API_KEY ALPACA_API_SECRET SEC_USER_AGENT TRADING_ENTITY_CATALOG_PATH
+export ALPACA_API_KEY=""
+export ALPACA_API_SECRET=""
+export SEC_USER_AGENT=""
+export TRADING_ENTITY_CATALOG_PATH=""
 export TRADING_ENV="runtime-smoke"
 export TRADING_DEMO_MODE="true"
 export TRADING_EXECUTION_MODE="internal-paper"
@@ -171,7 +174,8 @@ export TRADING_CORS_ORIGINS="$DASHBOARD_URL"
 export NEXT_PUBLIC_API_URL="$API_URL"
 export NEXT_PUBLIC_CONTROL_API_KEY="runtime-smoke-control-key"
 
-setsid python -m uvicorn trading_app.main:app \
+setsid bash -c 'cd "$1"; shift; exec "$@"' _ "$SMOKE_ROOT" \
+  python -m uvicorn trading_app.main:app \
   --host 127.0.0.1 \
   --port "$API_PORT" \
   --log-level info \
@@ -186,7 +190,6 @@ from __future__ import annotations
 import json
 import os
 import time
-import urllib.error
 import urllib.request
 
 from trading_app import __version__
