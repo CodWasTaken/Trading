@@ -9,6 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from . import __version__
 from .auth import require_control_api_key
 from .broker import AlpacaPaperBroker, InternalPaperBroker
 from .config import Settings, get_settings
@@ -95,7 +96,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="Trading Platform API",
-    version="0.4.0",
+    version=__version__,
     description="Risk-first AI-assisted paper trading API",
     lifespan=lifespan,
 )
@@ -122,6 +123,7 @@ async def health(current: StateDependency) -> dict[str, object]:
     )
     return {
         "status": "ok" if feed_health["healthy"] else "degraded",
+        "version": __version__,
         "environment": current.settings.trading_env,
         "demo_mode": current.settings.trading_demo_mode,
         "execution_mode": current.settings.trading_execution_mode,
@@ -140,6 +142,7 @@ async def dashboard_summary(current: StateDependency) -> dict[str, object]:
         current.settings.trading_max_data_age_seconds
     )
     return {
+        "version": __version__,
         "portfolio": portfolio.model_dump(mode="json"),
         "kill_switch": current.risk.kill_switch,
         "engine_running": current.engine.running,
