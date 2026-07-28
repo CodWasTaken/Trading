@@ -14,7 +14,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--registry", default=".trading/models")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("summary", help="Print models, aliases, and alias history")
+    subparsers.add_parser(
+        "summary",
+        help="Print models, aliases, alias history, and holdout evaluations",
+    )
 
     inspect = subparsers.add_parser("inspect", help="Print one registered model record")
     inspect.add_argument("version")
@@ -22,6 +25,12 @@ def build_parser() -> argparse.ArgumentParser:
     history = subparsers.add_parser("history", help="Print append-only alias history")
     history.add_argument("--alias")
     history.add_argument("--limit", type=int)
+
+    holdouts = subparsers.add_parser(
+        "holdouts",
+        help="Print immutable untouched-holdout evaluation records",
+    )
+    holdouts.add_argument("--version")
 
     alias = subparsers.add_parser(
         "set-alias",
@@ -33,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     promote = subparsers.add_parser(
         "promote",
-        help="Promote a registered challenger through quantitative gates",
+        help="Promote a registered challenger through calibration and holdout gates",
     )
     promote.add_argument("version")
     promote.add_argument("--reason", default="operator_promotion")
@@ -43,6 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
     promote.add_argument("--minimum-observations", type=int, default=500)
     promote.add_argument("--minimum-excess-return", type=float, default=0.0)
     promote.add_argument("--minimum-news-sharpe-delta", type=float, default=0.0)
+    promote.add_argument("--minimum-holdout-net-return", type=float, default=0.0)
+    promote.add_argument("--minimum-holdout-sharpe", type=float, default=0.0)
+    promote.add_argument("--maximum-holdout-drawdown", type=float, default=0.15)
+    promote.add_argument("--minimum-holdout-observations", type=int, default=100)
+    promote.add_argument("--minimum-holdout-excess-return", type=float, default=0.0)
 
     rollback = subparsers.add_parser(
         "rollback",
@@ -66,6 +80,12 @@ def main() -> None:
             "registry": arguments.registry,
             "alias": arguments.alias,
             "events": registry.history(alias=arguments.alias, limit=arguments.limit),
+        }
+    elif arguments.command == "holdouts":
+        result = {
+            "registry": arguments.registry,
+            "version": arguments.version,
+            "evaluations": registry.holdout_evaluations(version=arguments.version),
         }
     elif arguments.command == "set-alias":
         if arguments.alias.strip().lower() == "champion":
@@ -93,12 +113,19 @@ def main() -> None:
             minimum_observations=arguments.minimum_observations,
             minimum_excess_return=arguments.minimum_excess_return,
             minimum_news_sharpe_delta=arguments.minimum_news_sharpe_delta,
+            require_holdout_evaluation=True,
+            minimum_holdout_net_return=arguments.minimum_holdout_net_return,
+            minimum_holdout_sharpe=arguments.minimum_holdout_sharpe,
+            maximum_holdout_drawdown=arguments.maximum_holdout_drawdown,
+            minimum_holdout_observations=arguments.minimum_holdout_observations,
+            minimum_holdout_excess_return=arguments.minimum_holdout_excess_return,
             reason=arguments.reason,
         )
         result = {
             "promoted": True,
             "version": record.version,
             "reason": arguments.reason,
+            "holdout_evaluation": registry.latest_holdout_evaluation(record.version),
             "aliases": registry.summary()["aliases"],
         }
     else:

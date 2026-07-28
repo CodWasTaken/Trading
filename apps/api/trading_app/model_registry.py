@@ -10,7 +10,7 @@ from uuid import uuid4
 from .research import BacktestMetrics, RidgeReturnModel, metrics_dict
 
 
-REGISTRY_SCHEMA_VERSION = 2
+REGISTRY_SCHEMA_VERSION = 3
 _ALIAS_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
 
@@ -37,6 +37,7 @@ class ModelRegistry:
             "models": {},
             "aliases": {},
             "alias_history": [],
+            "holdout_evaluations": [],
         }
 
     def _read(self) -> dict[str, object]:
@@ -46,17 +47,21 @@ class ModelRegistry:
         models = payload.get("models", {})
         aliases = payload.get("aliases", {})
         history = payload.get("alias_history", [])
+        holdout_evaluations = payload.get("holdout_evaluations", [])
         if not isinstance(models, dict):
             raise ValueError("Model registry models must be an object")
         if not isinstance(aliases, dict):
             raise ValueError("Model registry aliases must be an object")
         if not isinstance(history, list):
             raise ValueError("Model registry alias_history must be a list")
+        if not isinstance(holdout_evaluations, list):
+            raise ValueError("Model registry holdout_evaluations must be a list")
         return {
             "schema_version": REGISTRY_SCHEMA_VERSION,
             "models": models,
             "aliases": aliases,
             "alias_history": history,
+            "holdout_evaluations": holdout_evaluations,
         }
 
     def _write(self, payload: dict[str, object]) -> None:
@@ -150,6 +155,68 @@ class ModelRegistry:
         self._write(index)
         return record
 
+    def assert_holdout_available(self, version: str, dataset_sha256: str) -> None:
+        self.get(version)
+        for evaluation in self.holdout_evaluations(version=version):
+            if evaluation.get("dataset_sha256") == dataset_sha256:
+                raise ValueError(
+                    "This frozen model version has already been scored on this holdout hash"
+                )
+
+    def record_holdout_evaluation(
+        self,
+        version: str,
+        *,
+        dataset_path: str,
+        dataset_sha256: str,
+        metadata_sha256: str,
+        split_id: str,
+        report_path: str,
+        report_sha256: str,
+        metrics: dict[str, object],
+        diagnostics: object,
+        frozen_configuration: object,
+    ) -> dict[str, object]:
+        self.assert_holdout_available(version, dataset_sha256)
+        index = self._read()
+        event: dict[str, object] = {
+            "id": uuid4().hex,
+            "evaluated_at": datetime.now(UTC).isoformat(),
+            "model_version": version,
+            "dataset_path": dataset_path,
+            "dataset_sha256": dataset_sha256,
+            "metadata_sha256": metadata_sha256,
+            "split_id": split_id,
+            "report_path": report_path,
+            "report_sha256": report_sha256,
+            "metrics": metrics,
+            "diagnostics": diagnostics,
+            "frozen_configuration": frozen_configuration,
+        }
+        evaluations = list(index["holdout_evaluations"])
+        evaluations.append(event)
+        index["holdout_evaluations"] = evaluations
+        self._write(index)
+        return event
+
+    def holdout_evaluations(
+        self,
+        *,
+        version: str | None = None,
+    ) -> list[dict[str, object]]:
+        if version is not None:
+            self.get(version)
+        return [
+            dict(event)
+            for event in self._read()["holdout_evaluations"]
+            if isinstance(event, dict)
+            and (version is None or event.get("model_version") == version)
+        ]
+
+    def latest_holdout_evaluation(self, version: str) -> dict[str, object] | None:
+        evaluations = self.holdout_evaluations(version=version)
+        return evaluations[-1] if evaluations else None
+
     def promote(
         self,
         version: str,
@@ -160,6 +227,12 @@ class ModelRegistry:
         minimum_observations: int = 100,
         minimum_excess_return: float | None = None,
         minimum_news_sharpe_delta: float | None = None,
+        require_holdout_evaluation: bool = True,
+        minimum_holdout_net_return: float = 0.0,
+        minimum_holdout_sharpe: float = 0.0,
+        maximum_holdout_drawdown: float = 0.20,
+        minimum_holdout_observations: int = 100,
+        minimum_holdout_excess_return: float | None = None,
         reason: str = "promotion_gates_passed",
     ) -> ModelRecord:
         record = self.get(version)
@@ -187,6 +260,29 @@ class ModelRegistry:
             <= minimum_news_sharpe_delta
         ):
             failures.append("news_ablation_delta_below_gate")
+
+        holdout_evaluation = self.latest_holdout_evaluation(version)
+        if require_holdout_evaluation and holdout_evaluation is None:
+            failures.append("untouched_holdout_evaluation_missing")
+        if require_holdout_evaluation and holdout_evaluation is not None:
+            holdout_metrics = holdout_evaluation.get("metrics")
+            if not isinstance(holdout_metrics, dict):
+                failures.append("untouched_holdout_metrics_invalid")
+            else:
+                if float(holdout_metrics.get("net_return", 0)) <= minimum_holdout_net_return:
+                    failures.append("holdout_net_return_below_gate")
+                if float(holdout_metrics.get("sharpe", 0)) <= minimum_holdout_sharpe:
+                    failures.append("holdout_sharpe_below_gate")
+                if float(holdout_metrics.get("max_drawdown", 1)) >= maximum_holdout_drawdown:
+                    failures.append("holdout_drawdown_above_gate")
+                if int(holdout_metrics.get("observations", 0)) < minimum_holdout_observations:
+                    failures.append("holdout_observations_below_gate")
+                if (
+                    minimum_holdout_excess_return is not None
+                    and float(holdout_metrics.get("excess_return_vs_benchmark", 0))
+                    <= minimum_holdout_excess_return
+                ):
+                    failures.append("holdout_excess_return_below_gate")
         if failures:
             raise ValueError("Model failed promotion gates: " + ", ".join(failures))
 
@@ -197,6 +293,12 @@ class ModelRegistry:
             "minimum_observations": minimum_observations,
             "minimum_excess_return": minimum_excess_return,
             "minimum_news_sharpe_delta": minimum_news_sharpe_delta,
+            "require_holdout_evaluation": require_holdout_evaluation,
+            "minimum_holdout_net_return": minimum_holdout_net_return,
+            "minimum_holdout_sharpe": minimum_holdout_sharpe,
+            "maximum_holdout_drawdown": maximum_holdout_drawdown,
+            "minimum_holdout_observations": minimum_holdout_observations,
+            "minimum_holdout_excess_return": minimum_holdout_excess_return,
         }
         return self.set_alias(
             "champion",
@@ -206,6 +308,7 @@ class ModelRegistry:
             details={
                 "promotion_gates": gates,
                 "registered_metrics": metrics,
+                "holdout_evaluation": holdout_evaluation,
             },
         )
 
