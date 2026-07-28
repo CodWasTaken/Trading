@@ -12,6 +12,9 @@ from pydantic import BaseModel
 from .broker import AlpacaPaperBroker, InternalPaperBroker
 from .config import Settings, get_settings
 from .engine import TradingEngine
+from .model_registry import ModelRegistry
+from .model_strategy import ChampionModelStrategy
+from .persistence import SQLiteEventSink
 from .portfolio import Portfolio
 from .providers import AlpacaWebSocketFeed, DemoFeed
 from .risk import RiskEngine
@@ -26,7 +29,8 @@ class ControlRequest(BaseModel):
 class AppState:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.store = EventStore()
+        self.event_sink = SQLiteEventSink(settings.trading_database_path)
+        self.store = EventStore(sink=self.event_sink)
         self.portfolio = Portfolio(settings.trading_starting_cash)
         self.risk = RiskEngine(settings)
         broker = (
@@ -34,11 +38,24 @@ class AppState:
             if settings.trading_execution_mode == "alpaca-paper"
             else InternalPaperBroker()
         )
+        registry = ModelRegistry(settings.trading_model_registry_path)
+        champion = (
+            registry.load_champion()
+            if settings.trading_strategy_mode == "champion"
+            else None
+        )
+        strategy = (
+            ChampionModelStrategy(champion)
+            if champion is not None
+            else ExplainableCatalystStrategy()
+        )
+        self.model_registry = registry
+        self.active_strategy = "champion" if champion is not None else "explainable"
         self.engine = TradingEngine(
             store=self.store,
             portfolio=self.portfolio,
             risk=self.risk,
-            strategy=ExplainableCatalystStrategy(),
+            strategy=strategy,
             broker=broker,
         )
         self.engine_task: asyncio.Task[None] | None = None
@@ -65,6 +82,7 @@ async def lifespan(_: FastAPI):
         yield
     finally:
         await state.engine.stop()
+        state.event_sink.close()
         if state.engine_task:
             state.engine_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -73,7 +91,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="Trading Platform API",
-    version="0.1.0",
+    version="0.2.0",
     description="Risk-first AI-assisted paper trading API",
     lifespan=lifespan,
 )
@@ -102,6 +120,7 @@ async def health(current: StateDependency) -> dict[str, object]:
         "execution_mode": current.settings.trading_execution_mode,
         "engine_running": current.engine.running,
         "kill_switch": current.risk.kill_switch,
+        "active_strategy": current.active_strategy,
     }
 
 
@@ -114,6 +133,8 @@ async def dashboard_summary(current: StateDependency) -> dict[str, object]:
         "kill_switch": current.risk.kill_switch,
         "engine_running": current.engine.running,
         "symbols": current.settings.trading_symbols,
+        "active_strategy": current.active_strategy,
+        "model_registry": current.model_registry.summary(),
         "recent": ledger,
     }
 
@@ -126,6 +147,11 @@ async def portfolio(current: StateDependency) -> dict[str, object]:
 @app.get("/v1/events")
 async def events(current: StateDependency) -> dict[str, object]:
     return await current.store.snapshot()
+
+
+@app.get("/v1/models")
+async def models(current: StateDependency) -> dict[str, object]:
+    return current.model_registry.summary()
 
 
 @app.post("/v1/control/kill-switch")

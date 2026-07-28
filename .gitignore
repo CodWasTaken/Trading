@@ -7,6 +7,7 @@ __pycache__/
 htmlcov/
 .venv/
 .env
+.trading/
 *.db
 *.sqlite3
 node_modules/
