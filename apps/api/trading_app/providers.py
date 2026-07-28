@@ -13,7 +13,7 @@ import websockets
 from .config import Settings
 from .domain import NewsEvent, Quote
 from .entities import EntityCatalog
-from .news_intelligence import NewsIntelligence
+from .point_in_time_news import PointInTimeNewsIntelligence
 
 
 class DemoFeed:
@@ -80,7 +80,7 @@ class AlpacaWebSocketFeed:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.key, self.secret = settings.require_alpaca_credentials()
-        self.news_intelligence = NewsIntelligence(
+        self.news_intelligence = PointInTimeNewsIntelligence(
             entity_catalog=EntityCatalog.load(settings.trading_entity_catalog_path)
         )
 
