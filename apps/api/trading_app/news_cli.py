@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .domain import NewsEvent
 from .entities import EntityCatalog
+from .news_evaluation import build_label_set, evaluate_label_set
 from .point_in_time_news import PointInTimeNewsIntelligence
 
 
@@ -126,7 +127,7 @@ def reclassify_news(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Audit and migrate point-in-time news enrichment archives"
+        description="Audit, label, and migrate point-in-time news enrichment archives"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     reclassify = subparsers.add_parser(
@@ -140,6 +141,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     catalog = subparsers.add_parser("validate-catalog", help="Validate and summarize a catalog")
     catalog.add_argument("--catalog", required=True)
+
+    sample = subparsers.add_parser(
+        "sample-labels",
+        help="Create a deterministic stratified CSV for human event/entity labels",
+    )
+    sample.add_argument("--input", required=True, help="Enriched NewsEvent JSON Lines")
+    sample.add_argument("--output", required=True, help="Label-set CSV")
+    sample.add_argument("--size", type=int, default=400)
+    sample.add_argument("--minimum-per-stratum", type=int, default=3)
+    sample.add_argument("--seed", default="news-evaluation-v1")
+    sample.add_argument("--metadata", help="Optional label-set metadata JSON path")
+
+    evaluate = subparsers.add_parser(
+        "evaluate-labels",
+        help="Measure event and entity precision/recall from a reviewed label-set CSV",
+    )
+    evaluate.add_argument("--labels", required=True, help="Reviewed label-set CSV")
+    evaluate.add_argument("--output", required=True, help="Evaluation report JSON")
+    evaluate.add_argument("--metadata", help="Optional label-set metadata JSON path")
+    evaluate.add_argument("--require-complete", action="store_true")
     return parser
 
 
@@ -152,8 +173,24 @@ def main() -> None:
             catalog_path=arguments.catalog,
             report_path=arguments.report,
         )
-    else:
+    elif arguments.command == "validate-catalog":
         result = EntityCatalog.load(arguments.catalog).summary()
+    elif arguments.command == "sample-labels":
+        result = build_label_set(
+            arguments.input,
+            arguments.output,
+            sample_size=arguments.size,
+            minimum_per_stratum=arguments.minimum_per_stratum,
+            seed=arguments.seed,
+            metadata_path=arguments.metadata,
+        )
+    else:
+        result = evaluate_label_set(
+            arguments.labels,
+            arguments.output,
+            require_complete=arguments.require_complete,
+            metadata_path=arguments.metadata,
+        )
     print(json.dumps(result, indent=2, sort_keys=True))
 
 
