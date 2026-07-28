@@ -46,10 +46,14 @@ def quote_from_bar(
         raise ValueError("spread_bps must be non-negative")
     feature_time = bar.timestamp.astimezone(UTC) + bar_interval
     half_spread = bar.close * spread_bps / 20_000
+    bid = bar.close - half_spread
+    ask = bar.close + half_spread
+    if bid <= 0 or ask <= bid:
+        raise ValueError("spread_bps produced an invalid synthetic quote")
     return Quote(
         symbol=bar.symbol,
-        bid=bar.close - half_spread,
-        ask=bar.close + half_spread,
+        bid=bid,
+        ask=ask,
         event_time=feature_time,
         knowledge_time=feature_time,
     )
@@ -71,6 +75,10 @@ async def run_historical_replay(
         raise ValueError("Historical replay requires at least one bar")
     if bar_interval <= timedelta(0):
         raise ValueError("bar_interval must be positive")
+    if settings.trading_starting_cash <= 0:
+        raise ValueError("trading_starting_cash must be positive")
+    if slippage_bps < 0:
+        raise ValueError("slippage_bps must be non-negative")
 
     ordered_bars = sorted(
         bars,
@@ -170,7 +178,9 @@ async def run_historical_replay(
         "symbols": symbols,
         "start": first_time.isoformat(),
         "end": final_time.isoformat(),
-        "sessions": len({bar.timestamp.date() for bar in ordered_bars}),
+        "sessions": len(
+            {bar.timestamp.astimezone(UTC).date() for bar in ordered_bars}
+        ),
         "bars": len(ordered_bars),
         "news_visible": news_cursor,
         "news_after_replay_end": len(ordered_news) - news_cursor,
