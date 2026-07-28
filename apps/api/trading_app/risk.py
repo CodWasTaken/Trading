@@ -1,16 +1,27 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from .config import Settings
 from .domain import DecisionStatus, PortfolioSnapshot, Quote, RiskDecision, Side, SignalProposal
 
 
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
 class RiskEngine:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         self.settings = settings
         self.kill_switch = False
         self._seen_proposals: set[str] = set()
+        self._clock = clock or _utc_now
 
     def set_kill_switch(self, enabled: bool) -> None:
         self.kill_switch = enabled
@@ -33,7 +44,7 @@ class RiskEngine:
         if quote.spread_bps > self.settings.trading_max_spread_bps:
             reasons.append("spread_above_threshold")
 
-        age = (datetime.now(UTC) - quote.knowledge_time).total_seconds()
+        age = (self._clock() - quote.knowledge_time).total_seconds()
         if age > self.settings.trading_max_data_age_seconds:
             reasons.append("stale_market_data")
         if portfolio.trades_today >= self.settings.trading_max_trades_per_day:
