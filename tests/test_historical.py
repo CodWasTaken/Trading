@@ -63,7 +63,7 @@ async def test_historical_client_paginates_bars_and_enriches_news() -> None:
                             "headline": "Apple raises guidance after strong revenue growth",
                             "summary": "The company increased its annual outlook.",
                             "source": "Reuters",
-                            "symbols": ["AAPL", "MSFT"],
+                            "symbols": ["AAPL", "MSFT", "TSLA"],
                         }
                     ],
                     "next_page_token": None,
