@@ -39,6 +39,9 @@ Implemented foundation:
 - knowledge-time effective windows for catalog relationships
 - deterministic stratified human-label templates with immutable prediction hashes
 - primary, secondary, entity-link, relation, and confusion-matrix evaluation reports
+- balanced deterministic independent-reviewer packet assignment
+- pairwise primary Cohen's kappa plus secondary/entity agreement reports
+- unanimous-only consensus generation that keeps disputes pending for adjudication
 
 Remaining production work:
 
@@ -46,7 +49,8 @@ Remaining production work:
 - company investor-relations feeds and raw article version archive
 - curated production entity catalog with dated relationship provenance
 - completed multi-reviewer event and entity-linking label sets
-- inter-annotator agreement and untouched validation archives
+- human adjudication of disputed labels and taxonomy-guideline revision
+- untouched validation archives and final independent evaluation
 - higher-capacity financial sentiment and structured extraction models
 - schema-constrained LLM extraction with deterministic fallback and disagreement review
 
