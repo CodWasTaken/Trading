@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trading-platform"
-version = "0.15.0"
+version = "0.16.0"
 description = "Risk-first AI-assisted paper trading platform"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -22,6 +22,7 @@ trading-research = "trading_app.cli:main"
 trading-news = "trading_app.news_cli:main"
 trading-holdout = "trading_app.holdout_cli:main"
 trading-registry = "trading_app.registry_cli:main"
+trading-monitor = "trading_app.monitoring_cli:main"
 trading-smoke = "trading_app.smoke_cli:main"
 
 [project.optional-dependencies]
