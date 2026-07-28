@@ -6,16 +6,17 @@ from collections.abc import AsyncIterator
 from copy import deepcopy
 
 from .domain import Fill, LiveEvent, NewsEvent, Order, Quote, RiskDecision, SignalProposal
+from .persistence import EventSink
 
 
 class EventStore:
-    """Thread-safe in-memory ledger.
+    """Thread-safe live ledger with an optional durable append-only sink."""
 
-    The API is intentionally small so PostgreSQL/TimescaleDB can replace this implementation
-    without changing the engine or dashboard contracts.
-    """
-
-    def __init__(self, max_events: int = 2_000) -> None:
+    def __init__(
+        self,
+        max_events: int = 2_000,
+        sink: EventSink | None = None,
+    ) -> None:
         self.quotes: dict[str, Quote] = {}
         self.news: deque[NewsEvent] = deque(maxlen=max_events)
         self.proposals: deque[SignalProposal] = deque(maxlen=max_events)
@@ -25,8 +26,11 @@ class EventStore:
         self.live_events: deque[LiveEvent] = deque(maxlen=max_events)
         self._subscribers: set[asyncio.Queue[LiveEvent]] = set()
         self._lock = asyncio.Lock()
+        self._sink = sink
 
     async def publish(self, event: LiveEvent) -> None:
+        if self._sink is not None:
+            self._sink.append(event.type, event.payload, event.created_at, event.created_at)
         async with self._lock:
             self.live_events.appendleft(event)
             subscribers = tuple(self._subscribers)
@@ -56,7 +60,9 @@ class EventStore:
     async def add_decision(self, item: RiskDecision) -> None:
         async with self._lock:
             self.decisions.appendleft(item)
-        await self.publish(LiveEvent(type="risk_decision", payload=item.model_dump(mode="json")))
+        await self.publish(
+            LiveEvent(type="risk_decision", payload=item.model_dump(mode="json"))
+        )
 
     async def add_order(self, item: Order) -> None:
         async with self._lock:
