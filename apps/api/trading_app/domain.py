@@ -6,6 +6,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, computed_field
 
+from .entities import LinkedEntity
+
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
@@ -44,11 +46,18 @@ class NewsEvent(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     symbol: str
     headline: str
+    summary: str = ""
     source: str
     sentiment: float = Field(ge=-1, le=1)
     novelty: float = Field(ge=0, le=1)
     source_quality: float = Field(ge=0, le=1)
     event_type: str = "other"
+    secondary_event_types: list[str] = Field(default_factory=list)
+    extraction_confidence: float = Field(default=0.0, ge=0, le=1)
+    entities: list[LinkedEntity] = Field(default_factory=list)
+    event_attributes: dict[str, float | str | bool] = Field(default_factory=dict)
+    content_fingerprint: str = ""
+    article_version: int = Field(default=1, ge=1)
     event_time: datetime = Field(default_factory=utc_now)
     knowledge_time: datetime = Field(default_factory=utc_now)
 
