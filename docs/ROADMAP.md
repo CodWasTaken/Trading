@@ -25,13 +25,27 @@ Remaining production work:
 
 ## Milestone 2 — news intelligence
 
-- SEC EDGAR submissions and filing facts
-- company investor-relations feeds
-- entity linking for issuers, subsidiaries, sectors, suppliers, and competitors
-- event taxonomy, novelty detection, article versioning, source-quality scoring
-- financial sentiment model and structured LLM extraction with schema validation
+Implemented foundation:
 
-**Exit gate:** labelled evaluation reports precision/recall by event type and confirms no future information leakage.
+- SEC EDGAR submissions and recent-filings API
+- deterministic sentiment, novelty, source quality, and article versioning
+- weighted primary and secondary financial-event taxonomy
+- typed percentage, money, EPS, and impact-direction extraction
+- provider-symbol issuer links
+- explicit issuer/subsidiary/supplier/customer/competitor/partner relationship catalogs
+- immutable historical archive reclassification with before/after audits
+- ticker-scoped deduplication that retains multi-symbol articles
+
+Remaining production work:
+
+- SEC filing facts and XBRL normalization
+- company investor-relations feeds and raw article version archive
+- curated production entity catalog with dated relationship provenance
+- labelled event and entity-linking evaluation sets
+- higher-capacity financial sentiment and structured extraction models
+- schema-constrained LLM extraction with deterministic fallback and disagreement review
+
+**Exit gate:** labelled evaluation reports precision/recall by event type and entity relation, confirms no future information leakage, and demonstrates stable improvements on an untouched archive.
 
 ## Milestone 3 — research and model registry
 
