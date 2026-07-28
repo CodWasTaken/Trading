@@ -74,7 +74,7 @@ def test_historical_dataset_uses_bar_close_time_and_news_knowledge_time(
     assert metadata["rows"] == len(rows)
 
 
-def test_walk_forward_purges_training_labels_overlapping_test() -> None:
+def test_walk_forward_purges_and_does_not_compound_overlapping_labels() -> None:
     start = datetime(2025, 1, 1, tzinfo=UTC)
     rows = [
         FeatureRow(
@@ -91,10 +91,12 @@ def test_walk_forward_purges_training_labels_overlapping_test() -> None:
         HISTORICAL_FEATURE_NAMES,
         minimum_train_rows=60,
         test_rows=20,
-        periods_per_year=1638,
+        periods_per_year=1638 / 5,
     )
     assert metrics.folds == 6
-    assert metrics.observations == 120
+    assert metrics.scored_observations == 120
+    assert metrics.observations == 24
+    assert metrics.test_periods == 24
     assert metrics.purged_rows == 30
 
 
@@ -176,3 +178,8 @@ def test_cli_builds_and_trains_real_dataset(tmp_path) -> None:
     assert result["promoted"] is False
     assert result["rows"] == 232
     assert result["metrics"]["purged_rows"] > 0
+    assert result["metrics"]["scored_observations"] > result["metrics"]["observations"]
+    assert result["validation_periods"]["effective_periods_per_year"] == 1638 / 5
+    assert result["diagnostics"]["no_news_ablation"] is not None
+    assert "equal_weight_long" in result["diagnostics"]
+    assert set(result["diagnostics"]["symbols"]) == {"AAPL", "MSFT"}
