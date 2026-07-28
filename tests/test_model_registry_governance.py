@@ -46,9 +46,17 @@ def test_registration_sets_challenger_and_records_history(tmp_path) -> None:
 def test_promotion_history_and_rollback_restore_previous_champion(tmp_path) -> None:
     registry = ModelRegistry(tmp_path)
     first = registry.register(_model(17), _metrics())
-    registry.promote(first.version, reason="first approved candidate")
+    registry.promote(
+        first.version,
+        reason="first approved candidate",
+        require_holdout_evaluation=False,
+    )
     second = registry.register(_model(19), _metrics(net_return=0.14, sharpe=1.3))
-    registry.promote(second.version, reason="second approved candidate")
+    registry.promote(
+        second.version,
+        reason="second approved candidate",
+        require_holdout_evaluation=False,
+    )
 
     champion = registry.champion()
     assert champion is not None
@@ -78,12 +86,14 @@ def test_legacy_registry_is_read_and_upgraded_on_next_write(tmp_path) -> None:
     summary = registry.summary()
     assert summary["schema_version"] == REGISTRY_SCHEMA_VERSION
     assert summary["alias_history"] == []
+    assert summary["holdout_evaluations"] == []
 
     registry.register(_model(23), _metrics())
     persisted = json.loads(index.read_text(encoding="utf-8"))
     assert persisted["schema_version"] == REGISTRY_SCHEMA_VERSION
     assert persisted["aliases"]["challenger"]
     assert persisted["alias_history"][0]["action"] == "register_challenger"
+    assert persisted["holdout_evaluations"] == []
 
 
 def test_operator_alias_cannot_reference_unknown_model(tmp_path) -> None:
