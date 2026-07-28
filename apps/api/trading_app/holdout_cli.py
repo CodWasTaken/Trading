@@ -29,6 +29,19 @@ def build_parser() -> argparse.ArgumentParser:
     split.add_argument("--holdout-output", required=True)
     split.add_argument("--split-time", required=True, help="ISO-8601 feature-time boundary")
     split.add_argument("--manifest")
+    split.add_argument(
+        "--candidate-family-size",
+        type=int,
+        default=1,
+        help="Predeclared number of candidate models that may be tested on this holdout",
+    )
+    split.add_argument("--bootstrap-samples", type=int, default=2000)
+    split.add_argument("--confidence-level", type=float, default=0.95)
+    split.add_argument(
+        "--bootstrap-block-size",
+        type=int,
+        help="Optional fixed moving-block length; defaults from holdout period count",
+    )
 
     evaluate = subparsers.add_parser(
         "evaluate",
@@ -50,6 +63,10 @@ def main() -> None:
             arguments.holdout_output,
             split_time=_parse_datetime(arguments.split_time),
             manifest_path=arguments.manifest,
+            candidate_family_size=arguments.candidate_family_size,
+            bootstrap_samples=arguments.bootstrap_samples,
+            confidence_level=arguments.confidence_level,
+            bootstrap_block_size=arguments.bootstrap_block_size,
         )
     else:
         result = evaluate_untouched_holdout(
