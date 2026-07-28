@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
@@ -37,6 +38,8 @@ class RelatedEntity(BaseModel):
     relation: EntityRelation
     aliases: list[str] = Field(default_factory=list)
     ticker: str | None = None
+    effective_from: datetime | None = None
+    effective_to: datetime | None = None
 
     @field_validator("canonical_name")
     @classmethod
@@ -50,6 +53,36 @@ class RelatedEntity(BaseModel):
     @classmethod
     def normalize_ticker(cls, value: str | None) -> str | None:
         return value.upper().strip() if value else None
+
+    @field_validator("effective_from", "effective_to")
+    @classmethod
+    def normalize_effective_time(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+    @model_validator(mode="after")
+    def validate_effective_window(self) -> RelatedEntity:
+        if (
+            self.effective_from is not None
+            and self.effective_to is not None
+            and self.effective_from >= self.effective_to
+        ):
+            raise ValueError("effective_from must be earlier than effective_to")
+        return self
+
+    def active_at(self, as_of: datetime | None) -> bool:
+        if as_of is None:
+            return True
+        if as_of.tzinfo is None:
+            as_of = as_of.replace(tzinfo=UTC)
+        as_of = as_of.astimezone(UTC)
+        return (
+            (self.effective_from is None or self.effective_from <= as_of)
+            and (self.effective_to is None or as_of < self.effective_to)
+        )
 
 
 class IssuerProfile(BaseModel):
@@ -110,7 +143,8 @@ class EntityCatalog:
     """Explicit, context-scoped issuer relationship catalog.
 
     Relationships are never inferred from co-mentions. A related entity is linked only when
-    an alias in the user-maintained catalog appears as a complete normalized phrase.
+    an alias in the user-maintained catalog appears as a complete normalized phrase and the
+    relationship is active at the supplied point-in-time boundary.
     """
 
     def __init__(self, profiles: list[IssuerProfile] | None = None) -> None:
@@ -124,7 +158,13 @@ class EntityCatalog:
         payload = EntityCatalogPayload.model_validate_json(source.read_text(encoding="utf-8"))
         return cls(payload.issuers)
 
-    def link(self, symbol: str, text: str) -> list[LinkedEntity]:
+    def link(
+        self,
+        symbol: str,
+        text: str,
+        *,
+        as_of: datetime | None = None,
+    ) -> list[LinkedEntity]:
         symbol = symbol.upper().strip()
         profile = self._profiles.get(symbol)
         issuer_name = profile.canonical_name if profile else symbol
@@ -146,6 +186,8 @@ class EntityCatalog:
         normalized_text = f" {normalize_entity_text(text)} "
         matches: list[tuple[int, LinkedEntity]] = []
         for entity in profile.related_entities:
+            if not entity.active_at(as_of):
+                continue
             candidates = [entity.canonical_name, *entity.aliases]
             match = _longest_phrase_match(normalized_text, candidates)
             if match is None:
@@ -164,13 +206,25 @@ class EntityCatalog:
                     ),
                 )
             )
-        linked.extend(item for _, item in sorted(matches, key=lambda pair: (-pair[0], pair[1].canonical_name)))
+        linked.extend(
+            item
+            for _, item in sorted(matches, key=lambda pair: (-pair[0], pair[1].canonical_name))
+        )
         return linked
 
     def summary(self) -> dict[str, object]:
+        relationships = [
+            entity
+            for profile in self._profiles.values()
+            for entity in profile.related_entities
+        ]
         return {
             "issuers": len(self._profiles),
-            "relationships": sum(len(profile.related_entities) for profile in self._profiles.values()),
+            "relationships": len(relationships),
+            "dated_relationships": sum(
+                entity.effective_from is not None or entity.effective_to is not None
+                for entity in relationships
+            ),
             "tickers": sorted(self._profiles),
         }
 
@@ -180,7 +234,10 @@ def normalize_entity_text(value: str) -> str:
 
 
 def _longest_phrase_match(normalized_text: str, candidates: list[str]) -> str | None:
-    ordered = sorted(candidates, key=lambda value: (-len(normalize_entity_text(value)), value.lower()))
+    ordered = sorted(
+        candidates,
+        key=lambda value: (-len(normalize_entity_text(value)), value.lower()),
+    )
     for candidate in ordered:
         normalized = normalize_entity_text(candidate)
         if normalized and f" {normalized} " in normalized_text:
