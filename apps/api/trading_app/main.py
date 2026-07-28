@@ -84,13 +84,13 @@ async def lifespan(_: FastAPI):
         yield
     finally:
         await state.engine.stop()
-        if isinstance(state.broker, AlpacaPaperBroker):
-            await state.broker.close()
-        state.event_sink.close()
         if state.engine_task:
             state.engine_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await state.engine_task
+        if isinstance(state.broker, AlpacaPaperBroker):
+            await state.broker.close()
+        state.event_sink.close()
 
 
 app = FastAPI(
