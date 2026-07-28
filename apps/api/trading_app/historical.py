@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from .config import Settings
 from .entities import EntityCatalog
-from .news_intelligence import NewsIntelligence
+from .point_in_time_news import PointInTimeNewsIntelligence
 
 
 class HistoricalBar(BaseModel):
@@ -41,7 +41,7 @@ class AlpacaHistoricalClient:
             transport=transport,
             headers={"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret},
         )
-        self.news_intelligence = NewsIntelligence(
+        self.news_intelligence = PointInTimeNewsIntelligence(
             entity_catalog=EntityCatalog.load(settings.trading_entity_catalog_path)
         )
 
