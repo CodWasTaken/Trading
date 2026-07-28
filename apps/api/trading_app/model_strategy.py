@@ -11,13 +11,17 @@ from .research import RidgeReturnModel
 class ChampionModelStrategy:
     """Live inference wrapper for a registered point-in-time return model."""
 
-    EXPECTED_FEATURES = ("momentum", "news_score", "volatility", "spread_bps")
+    SUPPORTED_FEATURES = ("momentum", "news_score", "volatility", "spread_bps")
 
     def __init__(self, model: RidgeReturnModel, minimum_edge: float = 0.0005) -> None:
-        if model.feature_names != self.EXPECTED_FEATURES:
+        unsupported = set(model.feature_names) - set(self.SUPPORTED_FEATURES)
+        if unsupported:
             raise ValueError(
-                f"Champion features {model.feature_names!r} do not match live features "
-                f"{self.EXPECTED_FEATURES!r}"
+                f"Champion features {sorted(unsupported)!r} are not available in live inference"
+            )
+        if not {"momentum", "news_score", "volatility"}.issubset(model.feature_names):
+            raise ValueError(
+                "Champion must include momentum, news_score, and volatility"
             )
         self.model = model
         self.minimum_edge = minimum_edge
@@ -29,7 +33,7 @@ class ChampionModelStrategy:
     ) -> SignalProposal | None:
         prices = self._prices[quote.symbol]
         prices.append(quote.mid)
-        if len(prices) < 8:
+        if len(prices) < 20:
             return None
         returns = [
             prices[index] / prices[index - 1] - 1 for index in range(1, len(prices))
@@ -40,7 +44,13 @@ class ChampionModelStrategy:
             item.sentiment * item.novelty * item.source_quality for item in news[:5]
         ]
         news_score = sum(weighted_news) / len(weighted_news) if weighted_news else 0.0
-        features = (momentum, news_score, volatility, quote.spread_bps)
+        available_features = {
+            "momentum": momentum,
+            "news_score": news_score,
+            "volatility": volatility,
+            "spread_bps": quote.spread_bps,
+        }
+        features = tuple(available_features[name] for name in self.model.feature_names)
         prediction = self.model.predict(features)
         if abs(prediction) <= self.minimum_edge:
             return None
@@ -69,10 +79,7 @@ class ChampionModelStrategy:
                 f"volatility={volatility:.4%}",
             ],
             feature_snapshot={
-                "momentum": momentum,
-                "news_score": news_score,
-                "volatility": volatility,
-                "spread_bps": quote.spread_bps,
+                **available_features,
                 "model_prediction": prediction,
                 "champion_model": True,
             },
