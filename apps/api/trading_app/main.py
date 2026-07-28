@@ -5,7 +5,7 @@ import contextlib
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -18,6 +18,7 @@ from .persistence import SQLiteEventSink
 from .portfolio import Portfolio
 from .providers import AlpacaWebSocketFeed, DemoFeed
 from .risk import RiskEngine
+from .sec import SecEdgarClient
 from .store import EventStore
 from .strategy import ExplainableCatalystStrategy
 
@@ -91,7 +92,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="Trading Platform API",
-    version="0.2.0",
+    version="0.3.0",
     description="Risk-first AI-assisted paper trading API",
     lifespan=lifespan,
 )
@@ -152,6 +153,35 @@ async def events(current: StateDependency) -> dict[str, object]:
 @app.get("/v1/models")
 async def models(current: StateDependency) -> dict[str, object]:
     return current.model_registry.summary()
+
+
+@app.get("/v1/sec/{cik}/filings")
+async def sec_filings(
+    cik: str,
+    current: StateDependency,
+    forms: Annotated[str, Query(description="Comma-separated SEC form types")] = "10-K,10-Q,8-K",
+    limit: Annotated[int, Query(ge=1, le=100)] = 25,
+) -> dict[str, object]:
+    try:
+        user_agent = current.settings.require_sec_user_agent()
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    client = SecEdgarClient(
+        user_agent,
+        base_url=current.settings.sec_data_base_url,
+    )
+    try:
+        requested_forms = {part.strip() for part in forms.split(",") if part.strip()}
+        filings = await client.recent_filings(cik, forms=requested_forms, limit=limit)
+    finally:
+        await client.close()
+    return {
+        "cik": str(cik).strip().removeprefix("CIK").zfill(10),
+        "filings": [
+            {**filing.model_dump(mode="json"), "filing_url": filing.filing_url}
+            for filing in filings
+        ],
+    }
 
 
 @app.post("/v1/control/kill-switch")

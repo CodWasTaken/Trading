@@ -2,12 +2,16 @@
 
 A private, risk-first AI-assisted paper-trading platform. It ingests market data and breaking stock news, turns those events into explainable signals, applies deterministic portfolio controls, simulates execution, and streams every decision to a live dashboard.
 
-> **Status:** functional paper-trading and research foundation. It defaults to a deterministic demo feed and an internal paper broker, so it can run safely without credentials. Alpaca paper trading and real-time market/news adapters are included behind configuration flags.
+> **Status:** functional paper-trading, data-ingestion, and research foundation. It defaults to a deterministic demo feed and an internal paper broker, so it can run safely without credentials. Alpaca paper trading and real-time market/news adapters are included behind configuration flags.
 
 ## What is included
 
 - FastAPI backend with REST and WebSocket APIs
 - Deterministic market/news demo stream
+- Live Alpaca quotes and news, plus paginated historical bars and news backfills
+- Headline deduplication, novelty scoring, source-quality weighting, sentiment, and catalyst classification
+- SEC EDGAR recent-filings client and API endpoint
+- Point-in-time dataset builder that joins news by `knowledge_time` to prevent look-ahead leakage
 - Explainable signal engine and news catalyst scoring
 - Non-bypassable risk engine with kill switch, exposure, drawdown, confidence, and stale-data controls
 - Conservative internal paper broker with spread and slippage
@@ -15,7 +19,7 @@ A private, risk-first AI-assisted paper-trading platform. It ingests market data
 - Live event ledger backed by an append-only SQLite journal using `event_time` and `knowledge_time`
 - Cost-aware backtests, walk-forward validation, a trainable return model, and a versioned champion registry
 - Next.js live dashboard showing portfolio, decisions, news, positions, orders, and system state
-- Unit tests for risk, fills, persistence, research, model promotion, and end-to-end decision flow
+- Tests for risk, fills, persistence, research, data pagination, SEC parsing, news enrichment, model promotion, and leakage boundaries
 - Docker Compose and GitHub Actions CI
 - Architecture, security, and production roadmap documentation
 
@@ -59,7 +63,7 @@ Open `http://localhost:3000`.
 docker compose up --build
 ```
 
-## Alpaca paper mode
+## Alpaca paper and data mode
 
 Create paper credentials and configure:
 
@@ -69,16 +73,52 @@ TRADING_EXECUTION_MODE=alpaca-paper
 ALPACA_API_KEY=...
 ALPACA_API_SECRET=...
 ALPACA_TRADING_BASE_URL=https://paper-api.alpaca.markets
+ALPACA_DATA_BASE_URL=https://data.alpaca.markets
 ALPACA_DATA_STREAM_URL=wss://stream.data.alpaca.markets/v2/iex
 ALPACA_NEWS_STREAM_URL=wss://stream.data.alpaca.markets/v1beta1/news
 ```
 
 The application intentionally does not support live-money execution. Adding it requires a separate adapter, explicit configuration, and a production-readiness review.
 
+### Historical backfills
+
+Download bars or enriched news as JSON Lines:
+
+```bash
+trading-research backfill bars \
+  --symbols AAPL,MSFT,NVDA \
+  --start 2025-01-01T00:00:00Z \
+  --end 2026-01-01T00:00:00Z \
+  --timeframe 1Hour \
+  --output .trading/history/bars.jsonl
+
+trading-research backfill news \
+  --symbols AAPL,MSFT,NVDA \
+  --start 2025-01-01T00:00:00Z \
+  --end 2026-01-01T00:00:00Z \
+  --output .trading/history/news.jsonl
+```
+
+Historical news providers generally expose source publication time, not the exact time your live system would have received the item. Treat that limitation explicitly in research metadata.
+
+## SEC EDGAR
+
+Set a descriptive application name and contact email:
+
+```dotenv
+SEC_USER_AGENT=Trading Research your-email@example.com
+```
+
+Then query recent authoritative filings through:
+
+```text
+GET /v1/sec/320193/filings?forms=10-K,10-Q,8-K&limit=25
+```
+
 ## Repository layout
 
 ```text
-apps/api/trading_app/     backend domain, execution, persistence, and research services
+apps/api/trading_app/     backend domain, data, execution, persistence, and research services
 apps/dashboard/           live Next.js dashboard
 tests/                    backend tests
 docs/                     architecture and rollout guidance
@@ -110,8 +150,8 @@ The default strategy is deliberately simple and explainable. It combines short-t
 
 ## Next production milestones
 
-1. Historical point-in-time market/news dataset builder and deterministic replay
-2. SEC filing ingestion, entity linking, article deduplication, novelty, and structured event extraction
+1. Deterministic replay from the durable event ledger and a full historical quote dataset
+2. Issuer/subsidiary/supplier entity linking and higher-capacity financial NLP extraction
 3. Higher-capacity champion/challenger models and experiment tracking
 4. Broker trade-update reconciliation and more realistic partial-fill/impact models
 5. Authentication, alerts, backups, and deployment hardening

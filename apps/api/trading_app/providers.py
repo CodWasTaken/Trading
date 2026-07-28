@@ -6,11 +6,13 @@ import math
 import random
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from typing import Any
 
 import websockets
 
 from .config import Settings
 from .domain import NewsEvent, Quote
+from .news_intelligence import NewsIntelligence
 
 
 class DemoFeed:
@@ -72,18 +74,14 @@ class DemoFeed:
 
 
 class AlpacaWebSocketFeed:
-    """Official Alpaca stock and news WebSocket consumer.
-
-    This keeps authentication/subscription behaviour isolated from the trading engine. The
-    parser is conservative: unknown message types are ignored and raw payload persistence is a
-    production roadmap item.
-    """
+    """Official Alpaca stock and news WebSocket consumer with enrichment."""
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.key, self.secret = settings.require_alpaca_credentials()
+        self.news_intelligence = NewsIntelligence()
 
-    async def _authenticate(self, socket: object) -> None:
+    async def _authenticate(self, socket: Any) -> None:
         await socket.send(
             json.dumps({"action": "auth", "key": self.key, "secret": self.secret})
         )
@@ -122,17 +120,17 @@ class AlpacaWebSocketFeed:
                     if item.get("T") != "n":
                         continue
                     now = datetime.now(UTC)
+                    event_time = datetime.fromisoformat(
+                        item.get("created_at", now.isoformat()).replace("Z", "+00:00")
+                    )
                     for symbol in item.get("symbols", []):
-                        yield NewsEvent(
+                        event = self.news_intelligence.enrich(
                             symbol=symbol,
                             headline=item.get("headline", "Untitled news item"),
                             source=item.get("source", "alpaca"),
-                            sentiment=0.0,
-                            novelty=0.5,
-                            source_quality=0.8,
-                            event_type="unclassified",
-                            event_time=datetime.fromisoformat(
-                                item.get("created_at", now.isoformat()).replace("Z", "+00:00")
-                            ),
+                            summary=item.get("summary", ""),
+                            event_time=event_time,
                             knowledge_time=now,
                         )
+                        if event is not None:
+                            yield event
