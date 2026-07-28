@@ -68,14 +68,19 @@ Implemented foundation:
 - automatic challenger alias for newly registered models
 - append-only alias history with promotion-gate snapshots
 - operator promotion, custom aliases, and champion rollback without artifact deletion
+- chronological calibration/holdout splitting with label-boundary purging
+- sealed split manifests with source and output hashes
+- frozen-model one-time scoring per model-version and holdout hash
+- registry-backed holdout evaluation history
+- promotion gates requiring both calibration and untouched-holdout evidence
 
 Remaining production work:
 
 - higher-capacity price/news models by forecast horizon
 - independent experiment manifests and comparison reports
 - drift and calibration monitoring
-- untouched holdout windows after threshold or feature selection
-- holdout-backed promotion gates rather than calibration-only metrics
+- several genuinely fresh holdout windows across regimes
+- statistical uncertainty and multiple-comparison controls
 
 **Exit gate:** the candidate improves risk-adjusted out-of-sample performance across several untouched windows and regimes.
 
