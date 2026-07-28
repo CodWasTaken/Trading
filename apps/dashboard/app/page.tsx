@@ -26,6 +26,7 @@ type Summary = {
   portfolio: Portfolio;
   kill_switch: boolean;
   engine_running: boolean;
+  active_strategy: string;
   symbols: string[];
   recent: {
     news: LedgerItem[];
@@ -255,6 +256,10 @@ export default function Dashboard() {
             <div>
               <dt>Engine</dt>
               <dd>{summary.engine_running ? "running" : "paused"}</dd>
+            </div>
+            <div>
+              <dt>Strategy</dt>
+              <dd>{summary.active_strategy}</dd>
             </div>
             <div>
               <dt>Kill switch</dt>
