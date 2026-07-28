@@ -98,8 +98,9 @@ class AlpacaHistoricalClient:
         include_content: bool = False,
         page_limit: int = 50,
     ) -> AsyncIterator[object]:
+        requested_symbols = {symbol.upper().strip() for symbol in symbols if symbol.strip()}
         params: dict[str, str | int | bool] = {
-            "symbols": ",".join(symbol.upper() for symbol in symbols),
+            "symbols": ",".join(sorted(requested_symbols)),
             "start": start.astimezone(UTC).isoformat(),
             "end": end.astimezone(UTC).isoformat(),
             "sort": "asc",
@@ -115,7 +116,11 @@ class AlpacaHistoricalClient:
                     article["created_at"].replace("Z", "+00:00")
                 )
                 summary = article.get("summary", "")
-                for symbol in article.get("symbols", []):
+                article_symbols = {
+                    str(symbol).upper().strip()
+                    for symbol in article.get("symbols", [])
+                }
+                for symbol in sorted(article_symbols & requested_symbols):
                     event = self.news_intelligence.enrich(
                         symbol=symbol,
                         headline=article.get("headline", "Untitled news item"),
