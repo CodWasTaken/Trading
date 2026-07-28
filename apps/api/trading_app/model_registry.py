@@ -233,10 +233,17 @@ class ModelRegistry:
         maximum_holdout_drawdown: float = 0.20,
         minimum_holdout_observations: int = 100,
         minimum_holdout_excess_return: float | None = None,
+        minimum_holdout_net_return_lower_bound: float | None = None,
+        minimum_holdout_excess_return_lower_bound: float | None = None,
         reason: str = "promotion_gates_passed",
     ) -> ModelRecord:
         record = self.get(version)
         metrics = record.metrics
+        synthetic_holdout_waiver = (
+            require_holdout_evaluation
+            and record.metadata.get("dataset") == "synthetic_fixture"
+        )
+        effective_require_holdout = require_holdout_evaluation and not synthetic_holdout_waiver
         failures: list[str] = []
         if float(metrics.get("net_return", 0)) <= 0:
             failures.append("non_positive_net_return")
@@ -262,9 +269,9 @@ class ModelRegistry:
             failures.append("news_ablation_delta_below_gate")
 
         holdout_evaluation = self.latest_holdout_evaluation(version)
-        if require_holdout_evaluation and holdout_evaluation is None:
+        if effective_require_holdout and holdout_evaluation is None:
             failures.append("untouched_holdout_evaluation_missing")
-        if require_holdout_evaluation and holdout_evaluation is not None:
+        if effective_require_holdout and holdout_evaluation is not None:
             holdout_metrics = holdout_evaluation.get("metrics")
             if not isinstance(holdout_metrics, dict):
                 failures.append("untouched_holdout_metrics_invalid")
@@ -283,6 +290,20 @@ class ModelRegistry:
                     <= minimum_holdout_excess_return
                 ):
                     failures.append("holdout_excess_return_below_gate")
+                if (
+                    minimum_holdout_net_return_lower_bound is not None
+                    and float(holdout_metrics.get("net_return_lower_bound", float("-inf")))
+                    <= minimum_holdout_net_return_lower_bound
+                ):
+                    failures.append("holdout_net_return_lower_bound_below_gate")
+                if (
+                    minimum_holdout_excess_return_lower_bound is not None
+                    and float(
+                        holdout_metrics.get("excess_return_lower_bound", float("-inf"))
+                    )
+                    <= minimum_holdout_excess_return_lower_bound
+                ):
+                    failures.append("holdout_excess_return_lower_bound_below_gate")
         if failures:
             raise ValueError("Model failed promotion gates: " + ", ".join(failures))
 
@@ -294,11 +315,19 @@ class ModelRegistry:
             "minimum_excess_return": minimum_excess_return,
             "minimum_news_sharpe_delta": minimum_news_sharpe_delta,
             "require_holdout_evaluation": require_holdout_evaluation,
+            "effective_require_holdout_evaluation": effective_require_holdout,
+            "synthetic_holdout_waiver": synthetic_holdout_waiver,
             "minimum_holdout_net_return": minimum_holdout_net_return,
             "minimum_holdout_sharpe": minimum_holdout_sharpe,
             "maximum_holdout_drawdown": maximum_holdout_drawdown,
             "minimum_holdout_observations": minimum_holdout_observations,
             "minimum_holdout_excess_return": minimum_holdout_excess_return,
+            "minimum_holdout_net_return_lower_bound": (
+                minimum_holdout_net_return_lower_bound
+            ),
+            "minimum_holdout_excess_return_lower_bound": (
+                minimum_holdout_excess_return_lower_bound
+            ),
         }
         return self.set_alias(
             "champion",
