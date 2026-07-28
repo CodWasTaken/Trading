@@ -8,6 +8,7 @@ import httpx
 from pydantic import BaseModel
 
 from .config import Settings
+from .entities import EntityCatalog
 from .news_intelligence import NewsIntelligence
 
 
@@ -40,7 +41,9 @@ class AlpacaHistoricalClient:
             transport=transport,
             headers={"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret},
         )
-        self.news_intelligence = NewsIntelligence()
+        self.news_intelligence = NewsIntelligence(
+            entity_catalog=EntityCatalog.load(settings.trading_entity_catalog_path)
+        )
 
     async def iter_bars(
         self,
