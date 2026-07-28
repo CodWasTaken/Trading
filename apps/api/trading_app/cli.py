@@ -2,18 +2,30 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import TypeVar
+
+from pydantic import BaseModel
 
 from .audit import audit_ledger
 from .config import get_settings
-from .historical import AlpacaHistoricalClient
+from .dataset import (
+    HISTORICAL_FEATURE_NAMES,
+    HistoricalPointInTimeDatasetBuilder,
+    load_feature_dataset,
+    write_feature_dataset,
+)
+from .domain import NewsEvent
+from .historical import AlpacaHistoricalClient, HistoricalBar
 from .model_registry import ModelRegistry
 from .research import RidgeReturnModel, metrics_dict, synthetic_feature_rows, walk_forward
 
 
 FEATURE_NAMES = ("momentum", "news_score", "volatility", "spread_bps")
+ModelType = TypeVar("ModelType", bound=BaseModel)
 
 
 def demo_train(rows: int, registry_path: str, promote: bool) -> dict[str, object]:
@@ -84,6 +96,188 @@ async def backfill(
     }
 
 
+def build_dataset(
+    bars_path: str,
+    news_path: str,
+    output: str,
+    *,
+    lookback_bars: int,
+    forecast_bars: int,
+    bar_minutes: int,
+    news_window_hours: float,
+) -> dict[str, object]:
+    bars_source = Path(bars_path)
+    news_source = Path(news_path)
+    bars = _load_json_lines(bars_source, HistoricalBar)
+    news = _load_json_lines(news_source, NewsEvent)
+    builder = HistoricalPointInTimeDatasetBuilder(
+        lookback_bars=lookback_bars,
+        forecast_bars=forecast_bars,
+        bar_interval=timedelta(minutes=bar_minutes),
+        news_window=timedelta(hours=news_window_hours),
+    )
+    rows = builder.build(bars, news)
+    if not rows:
+        raise ValueError("Historical inputs did not produce any feature rows")
+    symbols = sorted({row.symbol for row in rows})
+    metadata: dict[str, object] = {
+        "created_at": datetime.now(UTC).isoformat(),
+        "dataset_kind": "historical_point_in_time",
+        "symbols": symbols,
+        "start": rows[0].timestamp.isoformat(),
+        "end": rows[-1].timestamp.isoformat(),
+        "lookback_bars": lookback_bars,
+        "forecast_bars": forecast_bars,
+        "bar_interval_minutes": bar_minutes,
+        "news_window_hours": news_window_hours,
+        "sources": {
+            "bars": {
+                "path": str(bars_source),
+                "records": len(bars),
+                "sha256": _sha256(bars_source),
+            },
+            "news": {
+                "path": str(news_source),
+                "records": len(news),
+                "sha256": _sha256(news_source),
+            },
+        },
+        "point_in_time_controls": {
+            "bar_feature_time": "bar_start_plus_interval",
+            "purged_label_overlap": True,
+            "news_visibility": "knowledge_time_lte_feature_time",
+        },
+        "limitations": [
+            "Alpaca historical news does not expose provider receipt time; knowledge_time equals publication time.",
+            "Historical OHLC bars do not contain bid/ask spread, so the model excludes spread_bps; live risk checks still enforce spread limits.",
+        ],
+    }
+    destination, metadata_path = write_feature_dataset(
+        output,
+        rows,
+        HISTORICAL_FEATURE_NAMES,
+        metadata,
+    )
+    return {
+        "output": str(destination),
+        "metadata": str(metadata_path),
+        "rows": len(rows),
+        "symbols": symbols,
+        "feature_names": list(HISTORICAL_FEATURE_NAMES),
+        "start": rows[0].timestamp.isoformat(),
+        "end": rows[-1].timestamp.isoformat(),
+    }
+
+
+def train_dataset(
+    dataset_path: str,
+    registry_path: str,
+    *,
+    promote: bool,
+    minimum_train_rows: int,
+    test_rows: int,
+    transaction_cost_bps: float,
+    periods_per_year: int,
+    threshold: float,
+    ridge: float,
+    minimum_folds: int,
+    minimum_sharpe: float,
+    maximum_drawdown: float,
+    minimum_observations: int,
+) -> dict[str, object]:
+    rows, feature_names, dataset_metadata = load_feature_dataset(dataset_path)
+    metrics = walk_forward(
+        rows,
+        feature_names,
+        minimum_train_rows=minimum_train_rows,
+        test_rows=test_rows,
+        transaction_cost_bps=transaction_cost_bps,
+        periods_per_year=periods_per_year,
+        threshold=threshold,
+    )
+    model = RidgeReturnModel(feature_names, ridge=ridge)
+    model.fit(rows)
+    registry = ModelRegistry(registry_path)
+    record = registry.register(
+        model,
+        metrics,
+        metadata={
+            "dataset": str(Path(dataset_path)),
+            "dataset_sha256": _sha256(Path(dataset_path)),
+            "dataset_metadata": dataset_metadata,
+            "rows": len(rows),
+            "feature_names": list(feature_names),
+            "validation": {
+                "method": "expanding_walk_forward_with_label_purge",
+                "minimum_train_rows": minimum_train_rows,
+                "test_rows": test_rows,
+                "transaction_cost_bps": transaction_cost_bps,
+                "periods_per_year": periods_per_year,
+                "prediction_threshold": threshold,
+            },
+            "warning": "Historical out-of-sample evidence only; paper trading validation is still required.",
+        },
+    )
+    promoted = False
+    promotion_error: str | None = None
+    if promote:
+        try:
+            registry.promote(
+                record.version,
+                minimum_folds=minimum_folds,
+                minimum_sharpe=minimum_sharpe,
+                maximum_drawdown=maximum_drawdown,
+                minimum_observations=minimum_observations,
+            )
+            promoted = True
+        except ValueError as error:
+            promotion_error = str(error)
+    result: dict[str, object] = {
+        "version": record.version,
+        "registry": registry_path,
+        "dataset": dataset_path,
+        "rows": len(rows),
+        "feature_names": list(feature_names),
+        "metrics": metrics_dict(metrics),
+        "promote_requested": promote,
+        "promoted": promoted,
+        "promotion_gates": {
+            "minimum_folds": minimum_folds,
+            "minimum_sharpe": minimum_sharpe,
+            "maximum_drawdown": maximum_drawdown,
+            "minimum_observations": minimum_observations,
+        },
+    }
+    if promotion_error is not None:
+        result["promotion_error"] = promotion_error
+    return result
+
+
+def _load_json_lines(path: Path, model_type: type[ModelType]) -> list[ModelType]:
+    records: list[ModelType] = []
+    with path.open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                records.append(model_type.model_validate_json(line))
+            except ValueError as error:
+                raise ValueError(
+                    f"Invalid {model_type.__name__} at {path}:{line_number}"
+                ) from error
+    if not records:
+        raise ValueError(f"No records found in {path}")
+    return records
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Trading data, research, registry, and audit tools"
@@ -109,6 +303,36 @@ def build_parser() -> argparse.ArgumentParser:
     history.add_argument("--output", required=True)
     history.add_argument("--timeframe", default="1Min")
 
+    dataset = subparsers.add_parser(
+        "build-dataset",
+        help="Build a point-in-time feature dataset from historical bars and news",
+    )
+    dataset.add_argument("--bars", required=True, help="Historical bars JSON Lines")
+    dataset.add_argument("--news", required=True, help="Historical news JSON Lines")
+    dataset.add_argument("--output", required=True, help="Feature dataset JSON Lines")
+    dataset.add_argument("--lookback-bars", type=int, default=19)
+    dataset.add_argument("--forecast-bars", type=int, default=5)
+    dataset.add_argument("--bar-minutes", type=int, default=60)
+    dataset.add_argument("--news-window-hours", type=float, default=24.0)
+
+    real_train = subparsers.add_parser(
+        "train",
+        help="Train and walk-forward validate a registered model from a feature dataset",
+    )
+    real_train.add_argument("--dataset", required=True)
+    real_train.add_argument("--registry", default=".trading/models")
+    real_train.add_argument("--promote", action="store_true")
+    real_train.add_argument("--minimum-train-rows", type=int, default=500)
+    real_train.add_argument("--test-rows", type=int, default=100)
+    real_train.add_argument("--transaction-cost-bps", type=float, default=5.0)
+    real_train.add_argument("--periods-per-year", type=int, default=1638)
+    real_train.add_argument("--threshold", type=float, default=0.0005)
+    real_train.add_argument("--ridge", type=float, default=0.001)
+    real_train.add_argument("--minimum-folds", type=int, default=5)
+    real_train.add_argument("--minimum-sharpe", type=float, default=0.25)
+    real_train.add_argument("--maximum-drawdown", type=float, default=0.15)
+    real_train.add_argument("--minimum-observations", type=int, default=500)
+
     audit = subparsers.add_parser(
         "audit-ledger", help="Replay event relationships and report integrity failures"
     )
@@ -125,12 +349,42 @@ def main() -> None:
         result = asyncio.run(
             backfill(
                 arguments.kind,
-                [part.strip().upper() for part in arguments.symbols.split(",") if part.strip()],
+                [
+                    part.strip().upper()
+                    for part in arguments.symbols.split(",")
+                    if part.strip()
+                ],
                 parse_datetime(arguments.start),
                 parse_datetime(arguments.end),
                 arguments.output,
                 arguments.timeframe,
             )
+        )
+    elif arguments.command == "build-dataset":
+        result = build_dataset(
+            arguments.bars,
+            arguments.news,
+            arguments.output,
+            lookback_bars=arguments.lookback_bars,
+            forecast_bars=arguments.forecast_bars,
+            bar_minutes=arguments.bar_minutes,
+            news_window_hours=arguments.news_window_hours,
+        )
+    elif arguments.command == "train":
+        result = train_dataset(
+            arguments.dataset,
+            arguments.registry,
+            promote=arguments.promote,
+            minimum_train_rows=arguments.minimum_train_rows,
+            test_rows=arguments.test_rows,
+            transaction_cost_bps=arguments.transaction_cost_bps,
+            periods_per_year=arguments.periods_per_year,
+            threshold=arguments.threshold,
+            ridge=arguments.ridge,
+            minimum_folds=arguments.minimum_folds,
+            minimum_sharpe=arguments.minimum_sharpe,
+            maximum_drawdown=arguments.maximum_drawdown,
+            minimum_observations=arguments.minimum_observations,
         )
     elif arguments.command == "audit-ledger":
         result = audit_ledger(arguments.database).to_dict()

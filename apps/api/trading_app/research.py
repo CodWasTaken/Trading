@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import math
 import random
+from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
+from itertools import groupby
 from pathlib import Path
 from statistics import fmean, pstdev
 
@@ -15,6 +17,7 @@ class FeatureRow:
     symbol: str
     features: tuple[float, ...]
     target_return: float
+    label_end_time: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -28,6 +31,8 @@ class BacktestMetrics:
     turnover: float
     average_trade_return: float
     folds: int = 1
+    purged_rows: int = 0
+    test_periods: int = 0
 
 
 class RidgeReturnModel:
@@ -149,31 +154,40 @@ def backtest(
 ) -> BacktestMetrics:
     if not rows:
         raise ValueError("Backtest requires rows")
-    returns: list[float] = []
+    ordered = sorted(rows, key=lambda item: (item.timestamp, item.symbol))
+    period_returns: list[float] = []
     equity_curve = [1.0]
-    previous_position = 0.0
+    previous_positions: dict[str, float] = defaultdict(float)
     turnover = 0.0
     wins = 0
     active = 0
-    for row in sorted(rows, key=lambda item: item.timestamp):
-        prediction = model.predict(row.features)
-        position = 1.0 if prediction > threshold else 0.0
-        trade_turnover = abs(position - previous_position)
-        cost = trade_turnover * transaction_cost_bps / 10_000
-        net = position * row.target_return - cost
-        returns.append(net)
-        equity_curve.append(equity_curve[-1] * (1 + net))
-        turnover += trade_turnover
-        if position:
-            active += 1
-            wins += int(net > 0)
-        previous_position = position
+    active_net_return = 0.0
+
+    for _, timestamp_rows_iter in groupby(ordered, key=lambda item: item.timestamp):
+        timestamp_rows = list(timestamp_rows_iter)
+        period_net = 0.0
+        allocation = 1.0 / len(timestamp_rows)
+        for row in timestamp_rows:
+            prediction = model.predict(row.features)
+            position = 1.0 if prediction > threshold else 0.0
+            trade_turnover = abs(position - previous_positions[row.symbol])
+            cost = trade_turnover * transaction_cost_bps / 10_000
+            net = position * row.target_return - cost
+            period_net += allocation * net
+            turnover += trade_turnover
+            if position:
+                active += 1
+                wins += int(net > 0)
+                active_net_return += net
+            previous_positions[row.symbol] = position
+        period_returns.append(period_net)
+        equity_curve.append(equity_curve[-1] * (1 + period_net))
 
     net_return = equity_curve[-1] - 1
-    mean_return = fmean(returns)
-    volatility = pstdev(returns) if len(returns) > 1 else 0.0
+    mean_return = fmean(period_returns)
+    volatility = pstdev(period_returns) if len(period_returns) > 1 else 0.0
     sharpe = 0.0 if volatility == 0 else mean_return / volatility * math.sqrt(periods_per_year)
-    annualized = (equity_curve[-1] ** (periods_per_year / len(returns))) - 1
+    annualized = (equity_curve[-1] ** (periods_per_year / len(period_returns))) - 1
     peak = equity_curve[0]
     max_drawdown = 0.0
     for value in equity_curve:
@@ -187,7 +201,8 @@ def backtest(
         max_drawdown=max_drawdown,
         hit_rate=0.0 if active == 0 else wins / active,
         turnover=turnover,
-        average_trade_return=0.0 if active == 0 else sum(returns) / active,
+        average_trade_return=0.0 if active == 0 else active_net_return / active,
+        test_periods=len(period_returns),
     )
 
 
@@ -197,23 +212,56 @@ def walk_forward(
     minimum_train_rows: int = 120,
     test_rows: int = 20,
     transaction_cost_bps: float = 5.0,
+    periods_per_year: int = 252,
+    threshold: float = 0.0005,
 ) -> BacktestMetrics:
-    ordered = sorted(rows, key=lambda item: item.timestamp)
+    if minimum_train_rows <= len(feature_names) + 1:
+        raise ValueError("minimum_train_rows is too small for the feature width")
+    if test_rows < 1:
+        raise ValueError("test_rows must be positive")
+
+    ordered = sorted(rows, key=lambda item: (item.timestamp, item.symbol))
     fold_returns: list[float] = []
     fold_drawdowns: list[float] = []
     fold_sharpes: list[float] = []
     fold_hits: list[float] = []
     total_turnover = 0.0
     total_observations = 0
+    total_test_periods = 0
+    total_purged_rows = 0
     folds = 0
     cursor = minimum_train_rows
+
     while cursor + test_rows <= len(ordered):
+        while cursor < len(ordered) and ordered[cursor - 1].timestamp == ordered[cursor].timestamp:
+            cursor += 1
+        if cursor + test_rows > len(ordered):
+            break
+
+        test_end = cursor + test_rows
+        while test_end < len(ordered) and ordered[test_end - 1].timestamp == ordered[test_end].timestamp:
+            test_end += 1
+        test_block = ordered[cursor:test_end]
+        test_start = test_block[0].timestamp
+        training_candidates = ordered[:cursor]
+        training_rows = [
+            row
+            for row in training_candidates
+            if row.label_end_time is None or row.label_end_time < test_start
+        ]
+        total_purged_rows += len(training_candidates) - len(training_rows)
+        if len(training_rows) <= len(feature_names) + 1:
+            cursor = test_end
+            continue
+
         model = RidgeReturnModel(feature_names)
-        model.fit(ordered[:cursor])
+        model.fit(training_rows)
         metrics = backtest(
             model,
-            ordered[cursor : cursor + test_rows],
+            test_block,
+            threshold=threshold,
             transaction_cost_bps=transaction_cost_bps,
+            periods_per_year=periods_per_year,
         )
         fold_returns.append(metrics.net_return)
         fold_drawdowns.append(metrics.max_drawdown)
@@ -221,21 +269,30 @@ def walk_forward(
         fold_hits.append(metrics.hit_rate)
         total_turnover += metrics.turnover
         total_observations += metrics.observations
+        total_test_periods += metrics.test_periods
         folds += 1
-        cursor += test_rows
+        cursor = test_end
+
     if not folds:
         raise ValueError("Not enough rows for a walk-forward evaluation")
     compounded = math.prod(1 + value for value in fold_returns) - 1
+    annualized = (
+        (1 + compounded) ** (periods_per_year / total_test_periods) - 1
+        if total_test_periods > 0 and compounded > -1
+        else -1.0
+    )
     return BacktestMetrics(
         observations=total_observations,
         net_return=compounded,
-        annualized_return=compounded,
+        annualized_return=annualized,
         sharpe=fmean(fold_sharpes),
         max_drawdown=max(fold_drawdowns),
         hit_rate=fmean(fold_hits),
         turnover=total_turnover,
         average_trade_return=compounded / max(total_turnover, 1.0),
         folds=folds,
+        purged_rows=total_purged_rows,
+        test_periods=total_test_periods,
     )
 
 

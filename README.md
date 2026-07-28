@@ -11,7 +11,7 @@ A private, risk-first AI-assisted paper-trading platform. It ingests market data
 - Live Alpaca quotes and news, plus paginated historical bars and news backfills
 - Headline deduplication, novelty scoring, source-quality weighting, sentiment, and catalyst classification
 - SEC EDGAR recent-filings client and API endpoint
-- Point-in-time dataset builder that joins news by `knowledge_time` to prevent look-ahead leakage
+- Point-in-time dataset builders that join news by `knowledge_time` and timestamp bar features when the close is actually known
 - Explainable signal engine and news catalyst scoring
 - Non-bypassable risk engine with kill switch, exposure, drawdown, confidence, and stale-data controls
 - Conservative internal paper broker with spread and slippage
@@ -21,7 +21,8 @@ A private, risk-first AI-assisted paper-trading platform. It ingests market data
 - Live feed-age diagnostics and stale-symbol reporting
 - Live event ledger backed by an append-only SQLite journal using `event_time` and `knowledge_time`
 - Deterministic ledger replay/integrity audit command
-- Cost-aware backtests, walk-forward validation, a trainable return model, and a versioned champion registry
+- Cost-aware, multi-symbol backtests with purged walk-forward validation, a trainable return model, and a versioned champion registry
+- Historical dataset and real-data training CLI with source hashes, metadata, and explicit promotion gates
 - Next.js live dashboard showing portfolio, decisions, news, positions, feed health, incidents, and system state
 - Tests for risk, fills, persistence, research, provider pagination, SEC parsing, news enrichment, model promotion, reconciliation, and leakage boundaries
 - Docker Compose and GitHub Actions CI
@@ -123,6 +124,59 @@ trading-research backfill news \
 
 Historical news providers generally expose source publication time, not the exact time your live system would have received the item. Treat that limitation explicitly in research metadata.
 
+### Build a genuine point-in-time dataset
+
+Convert the backfills into features and forward-return labels. `--bar-minutes` must match the bar timeframe used during backfill:
+
+```bash
+trading-research build-dataset \
+  --bars .trading/history/bars.jsonl \
+  --news .trading/history/news.jsonl \
+  --bar-minutes 60 \
+  --lookback-bars 19 \
+  --forecast-bars 5 \
+  --output .trading/datasets/aapl-msft-nvda-1h.jsonl
+```
+
+The command writes the feature rows plus an adjacent `.metadata.json` file containing source paths, SHA-256 hashes, feature names, label horizon, time boundaries, and known data limitations. A one-hour bar is timestamped for research at `bar_start + 60 minutes`, because its closing price is not known at the bar start.
+
+Historical OHLC bars contain no bid/ask quotes. The historical model therefore trains on momentum, news score, and volatility instead of fabricating a spread feature. Live spread checks remain mandatory in the risk engine.
+
+### Train and validate a candidate
+
+First register a candidate without promotion:
+
+```bash
+trading-research train \
+  --dataset .trading/datasets/aapl-msft-nvda-1h.jsonl \
+  --registry .trading/models \
+  --minimum-train-rows 500 \
+  --test-rows 100 \
+  --transaction-cost-bps 5
+```
+
+Validation uses expanding multi-symbol walk-forward folds. Rows whose labels reach into a test fold are purged from that fold’s training set. Test returns are grouped by timestamp and equally allocated across the symbols present at that time rather than being compounded as unrelated sequential trades.
+
+Inspect the candidate:
+
+```bash
+trading-research registry --registry .trading/models
+```
+
+Only request promotion after reviewing the result:
+
+```bash
+trading-research train \
+  --dataset .trading/datasets/aapl-msft-nvda-1h.jsonl \
+  --registry .trading/models \
+  --minimum-train-rows 500 \
+  --test-rows 100 \
+  --transaction-cost-bps 5 \
+  --promote
+```
+
+The default real-data gates require positive net return, Sharpe above `0.25`, drawdown below `15%`, at least five folds, and at least 500 out-of-sample observations. A failed promotion request still registers the candidate and reports every failed gate without replacing the current champion.
+
 ## SEC EDGAR
 
 Set a descriptive application name and contact email:
@@ -174,7 +228,7 @@ TRADING_STRATEGY_MODE=champion
 TRADING_MODEL_REGISTRY_PATH=.trading/models
 ```
 
-The champion model still only creates proposals. Every proposal continues through the same non-bypassable risk engine.
+The champion model still only creates proposals. Every proposal continues through the same non-bypassable risk engine. Historical validation is not sufficient on its own; the candidate still needs sustained live paper evidence before any production review.
 
 ## Current strategy
 
@@ -183,10 +237,11 @@ The default strategy is deliberately simple and explainable. It combines short-t
 ## Next production milestones
 
 1. Full deterministic strategy replay from historical quote/news streams
-2. Issuer/subsidiary/supplier entity linking and higher-capacity financial NLP extraction
-3. Higher-capacity champion/challenger models and experiment tracking
-4. Streaming broker trade updates, queue/partial-fill simulation, and automatic reconciliation alerts
-5. Server-side user authentication, encrypted backups, and deployment runbooks
-6. Sixty to ninety live paper-trading days before any discussion of real funds
+2. Baseline and ablation reports across regimes, sectors, and individual tickers
+3. Issuer/subsidiary/supplier entity linking and higher-capacity financial NLP extraction
+4. Higher-capacity champion/challenger models and experiment tracking
+5. Streaming broker trade updates, queue/partial-fill simulation, and automatic reconciliation alerts
+6. Server-side user authentication, encrypted backups, and deployment runbooks
+7. Sixty to ninety live paper-trading days before any discussion of real funds
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md).
