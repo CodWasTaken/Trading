@@ -76,13 +76,16 @@ Implemented foundation:
 - predeclared candidate-family budgets and Bonferroni adjustment
 - deterministic circular moving-block bootstrap confidence intervals
 - promotion gates on adjusted holdout net-return and benchmark-excess lower bounds
+- immutable later-window feature and prediction drift reports
+- realized RMSE, calibration slope, active-signal quality, and frozen paper-simulation monitoring
+- fail-closed monitoring recommendations with non-zero unhealthy CLI exit status
 
 Remaining production work:
 
 - higher-capacity price/news models by forecast horizon
 - independent experiment manifests and comparison reports
-- drift and calibration monitoring
 - several genuinely fresh holdout windows across regimes
+- automated scheduling and alert delivery for matured monitoring windows
 
 **Exit gate:** the candidate improves risk-adjusted out-of-sample performance across several untouched windows and regimes.
 
