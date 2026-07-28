@@ -5,11 +5,11 @@ import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 from .dataset import dataset_metadata_path, load_feature_dataset, write_feature_dataset
 from .model_registry import ModelRegistry
 from .research import _ScoredRow, _simulate, metrics_dict
+from .uncertainty import block_bootstrap_evidence, simulation_period_returns
 
 
 def split_feature_dataset(
@@ -19,30 +19,69 @@ def split_feature_dataset(
     *,
     split_time: datetime,
     manifest_path: str | None = None,
+    candidate_family_size: int = 1,
+    bootstrap_samples: int = 2000,
+    confidence_level: float = 0.95,
+    bootstrap_block_size: int | None = None,
 ) -> dict[str, object]:
     source = Path(dataset_path)
     calibration_destination = Path(calibration_output)
     holdout_destination = Path(holdout_output)
+    manifest_destination = (
+        Path(manifest_path)
+        if manifest_path
+        else holdout_destination.with_suffix(".split-manifest.json")
+    )
     destinations = {
         source.resolve(),
         calibration_destination.resolve(),
         holdout_destination.resolve(),
+        manifest_destination.resolve(),
     }
-    if len(destinations) != 3:
-        raise ValueError("Source, calibration output, and holdout output must differ")
-    for destination in (calibration_destination, holdout_destination):
-        if destination.exists() or dataset_metadata_path(destination).exists():
+    if len(destinations) != 4:
+        raise ValueError("Source, outputs, and split manifest must all differ")
+    for destination in (
+        calibration_destination,
+        holdout_destination,
+        dataset_metadata_path(calibration_destination),
+        dataset_metadata_path(holdout_destination),
+        manifest_destination,
+    ):
+        if destination.exists():
             raise ValueError(f"Dataset split output already exists: {destination}")
+    if candidate_family_size < 1:
+        raise ValueError("candidate_family_size must be positive")
+    if bootstrap_samples < 200:
+        raise ValueError("bootstrap_samples must be at least 200")
+    if not 0.5 < confidence_level < 1.0:
+        raise ValueError("confidence_level must be between 0.5 and 1")
+    if bootstrap_block_size is not None and bootstrap_block_size < 1:
+        raise ValueError("bootstrap_block_size must be positive")
 
     boundary = _as_utc(split_time)
     rows, feature_names, source_metadata = load_feature_dataset(source)
     source_sha256 = _sha256(source)
     source_metadata_path = dataset_metadata_path(source)
     source_metadata_sha256 = _sha256(source_metadata_path)
+    statistical_plan: dict[str, object] = {
+        "method": "deterministic_circular_moving_block_bootstrap",
+        "candidate_family_size": candidate_family_size,
+        "samples": bootstrap_samples,
+        "nominal_confidence_level": confidence_level,
+        "block_size": bootstrap_block_size,
+        "multiple_comparison_adjustment": "bonferroni",
+        "predeclared_before_holdout_scoring": True,
+    }
     split_id = hashlib.sha256(
-        (
-            f"{source_sha256}|{source_metadata_sha256}|{boundary.isoformat()}|"
-            + ",".join(feature_names)
+        json.dumps(
+            {
+                "source_sha256": source_sha256,
+                "source_metadata_sha256": source_metadata_sha256,
+                "boundary": boundary.isoformat(),
+                "feature_names": feature_names,
+                "statistical_plan": statistical_plan,
+            },
+            sort_keys=True,
         ).encode()
     ).hexdigest()
 
@@ -68,6 +107,8 @@ def split_feature_dataset(
         for row in calibration_rows
     ):
         raise RuntimeError("Calibration labels overlap the untouched holdout boundary")
+    if bootstrap_block_size is not None and bootstrap_block_size > len(holdout_rows):
+        raise ValueError("bootstrap_block_size exceeds holdout row count")
 
     created_at = datetime.now(UTC).isoformat()
     common_metadata: dict[str, object] = {
@@ -85,11 +126,14 @@ def split_feature_dataset(
             "method": "chronological_feature_time_with_label_end_boundary_purge",
             "purged_boundary_rows": len(purged_boundary_rows),
         },
+        "statistical_plan": statistical_plan,
         "point_in_time_controls": {
             "calibration_feature_time_before_boundary": True,
             "calibration_label_end_before_boundary": True,
             "holdout_feature_time_at_or_after_boundary": True,
             "future_returns_not_used_to_choose_boundary": True,
+            "candidate_family_size_predeclared": True,
+            "uncertainty_method_predeclared": True,
         },
         "source_metadata": source_metadata,
     }
@@ -116,19 +160,13 @@ def split_feature_dataset(
         },
     )
 
-    manifest_destination = (
-        Path(manifest_path)
-        if manifest_path
-        else holdout_destination.with_suffix(".split-manifest.json")
-    )
-    if manifest_destination.exists():
-        raise ValueError(f"Split manifest already exists: {manifest_destination}")
     manifest: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "manifest_kind": "calibration_holdout_split",
         "split_id": split_id,
         "created_at": created_at,
         "boundary": boundary.isoformat(),
+        "statistical_plan": statistical_plan,
         "source": {
             "path": str(source),
             "rows": len(rows),
@@ -154,8 +192,9 @@ def split_feature_dataset(
         "controls": common_metadata["point_in_time_controls"],
         "limitations": [
             "A holdout remains independent only while humans avoid inspecting outcomes and tuning to them.",
-            "The split boundary must be selected before examining holdout performance.",
+            "The split boundary and candidate family size must be selected before examining holdout performance.",
             "Previously inspected periods cannot be made untouched retroactively by this command.",
+            "Bootstrap intervals summarize this historical sample and do not guarantee future performance.",
         ],
     }
     manifest_destination.parent.mkdir(parents=True, exist_ok=True)
@@ -184,6 +223,17 @@ def evaluate_untouched_holdout(
     split_payload = metadata.get("split")
     if not isinstance(split_payload, dict) or not split_payload.get("split_id"):
         raise ValueError("Holdout metadata does not define a split_id")
+    statistical_plan = metadata.get("statistical_plan")
+    if not isinstance(statistical_plan, dict):
+        raise ValueError("Holdout metadata lacks a predeclared statistical_plan")
+    try:
+        bootstrap_samples = int(statistical_plan["samples"])
+        confidence_level = float(statistical_plan["nominal_confidence_level"])
+        candidate_family_size = int(statistical_plan["candidate_family_size"])
+        raw_block_size = statistical_plan.get("block_size")
+        bootstrap_block_size = None if raw_block_size is None else int(raw_block_size)
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("Holdout statistical_plan is incomplete") from error
 
     registry = ModelRegistry(registry_path)
     model_record = registry.get(version) if version else registry.challenger()
@@ -239,8 +289,41 @@ def evaluate_untouched_holdout(
             candidate.metrics.net_return - benchmark.metrics.net_return
         ),
     )
+    candidate_period_returns = simulation_period_returns(
+        scored,
+        threshold=threshold,
+        transaction_cost_bps=transaction_cost_bps,
+    )
+    benchmark_period_returns = simulation_period_returns(
+        scored,
+        threshold=threshold,
+        transaction_cost_bps=transaction_cost_bps,
+        always_long=True,
+    )
+    uncertainty = block_bootstrap_evidence(
+        candidate_period_returns,
+        benchmark_period_returns,
+        samples=bootstrap_samples,
+        confidence_level=confidence_level,
+        candidate_family_size=candidate_family_size,
+        block_size=bootstrap_block_size,
+        seed_material=(
+            f"{dataset_sha256}|{model_record.version}|{split_payload['split_id']}"
+        ),
+    )
+    net_interval = uncertainty["net_return"]
+    excess_interval = uncertainty["excess_return_vs_benchmark"]
+    if not isinstance(net_interval, dict) or not isinstance(excess_interval, dict):
+        raise RuntimeError("Bootstrap uncertainty did not return interval objects")
+    metrics_payload = {
+        **metrics_dict(metrics),
+        "net_return_lower_bound": float(net_interval["lower"]),
+        "net_return_upper_bound": float(net_interval["upper"]),
+        "excess_return_lower_bound": float(excess_interval["lower"]),
+        "excess_return_upper_bound": float(excess_interval["upper"]),
+    }
     report: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "report_kind": "untouched_holdout_evaluation",
         "evaluated_at": datetime.now(UTC).isoformat(),
         "model": {
@@ -263,22 +346,31 @@ def evaluate_untouched_holdout(
             "prediction_threshold": threshold,
             "transaction_cost_bps": transaction_cost_bps,
             "effective_periods_per_year": periods_per_year,
+            "statistical_plan": statistical_plan,
         },
-        "metrics": metrics_dict(metrics),
+        "metrics": metrics_payload,
+        "uncertainty": uncertainty,
         "diagnostics": {
             "equal_weight_long": metrics_dict(benchmark.metrics),
             "symbols": candidate.symbols,
+            "non_overlapping_period_returns": {
+                "candidate": candidate_period_returns,
+                "equal_weight_long": benchmark_period_returns,
+            },
         },
         "controls": {
             "model_weights_frozen": True,
             "feature_schema_matched": True,
             "threshold_frozen_from_registration": True,
             "transaction_costs_frozen_from_registration": True,
+            "statistical_plan_frozen_at_split": True,
+            "multiple_comparison_budget_predeclared": True,
             "single_evaluation_per_model_and_holdout_hash": True,
             "holdout_not_used_for_model_fit": True,
         },
         "limitations": [
             "A one-time score does not prevent a human from informally overfitting future experiments to the result.",
+            "Bootstrap uncertainty is conditional on this historical sample and its dependence approximation.",
             "Promotion still requires paper-trading evidence after historical gates pass.",
         ],
     }
@@ -296,8 +388,11 @@ def evaluate_untouched_holdout(
             split_id=str(split_payload["split_id"]),
             report_path=str(destination),
             report_sha256=report_sha256,
-            metrics=metrics_dict(metrics),
-            diagnostics=report["diagnostics"],
+            metrics=metrics_payload,
+            diagnostics={
+                **report["diagnostics"],
+                "uncertainty": uncertainty,
+            },
             frozen_configuration=report["frozen_configuration"],
         )
         temporary.replace(destination)

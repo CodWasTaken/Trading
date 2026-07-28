@@ -54,16 +54,24 @@ def _metrics() -> BacktestMetrics:
     )
 
 
+def _split(source, tmp_path):
+    return split_feature_dataset(
+        str(source),
+        str(tmp_path / "calibration.jsonl"),
+        str(tmp_path / "holdout.jsonl"),
+        split_time=datetime(2025, 1, 11, tzinfo=UTC),
+        candidate_family_size=3,
+        bootstrap_samples=300,
+        confidence_level=0.95,
+        bootstrap_block_size=2,
+    )
+
+
 def test_split_purges_calibration_labels_crossing_holdout_boundary(tmp_path) -> None:
     source = _write_source(tmp_path)
     boundary = datetime(2025, 1, 11, tzinfo=UTC)
 
-    report = split_feature_dataset(
-        str(source),
-        str(tmp_path / "calibration.jsonl"),
-        str(tmp_path / "holdout.jsonl"),
-        split_time=boundary,
-    )
+    report = _split(source, tmp_path)
     calibration, calibration_names, calibration_metadata = load_feature_dataset(
         tmp_path / "calibration.jsonl"
     )
@@ -76,21 +84,19 @@ def test_split_purges_calibration_labels_crossing_holdout_boundary(tmp_path) -> 
     assert all(row.label_end_time is None or row.label_end_time < boundary for row in calibration)
     assert all(row.timestamp >= boundary for row in holdout)
     assert report["purged_boundary_rows"] == 2
+    assert report["schema_version"] == 2
+    assert report["statistical_plan"]["candidate_family_size"] == 3
+    assert report["statistical_plan"]["samples"] == 300
     assert calibration_metadata["dataset_role"] == "calibration"
     assert holdout_metadata["dataset_role"] == "untouched_holdout"
     assert holdout_metadata["sealed"] is True
+    assert holdout_metadata["statistical_plan"] == report["statistical_plan"]
     assert calibration_metadata["split"]["split_id"] == holdout_metadata["split"]["split_id"]
 
 
 def test_frozen_model_scores_holdout_once_and_can_pass_governed_promotion(tmp_path) -> None:
     source = _write_source(tmp_path)
-    boundary = datetime(2025, 1, 11, tzinfo=UTC)
-    split_feature_dataset(
-        str(source),
-        str(tmp_path / "calibration.jsonl"),
-        str(tmp_path / "holdout.jsonl"),
-        split_time=boundary,
-    )
+    _split(source, tmp_path)
     calibration, feature_names, _ = load_feature_dataset(tmp_path / "calibration.jsonl")
     model = RidgeReturnModel(feature_names)
     model.fit(calibration)
@@ -119,7 +125,13 @@ def test_frozen_model_scores_holdout_once_and_can_pass_governed_promotion(tmp_pa
         version=record.version,
     )
     assert report["metrics"]["net_return"] > 0
+    assert report["metrics"]["net_return_lower_bound"] > 0
+    assert report["uncertainty"]["candidate_family_size"] == 3
+    assert report["uncertainty"]["adjusted_confidence_level"] == pytest.approx(
+        1 - (1 - 0.95) / 3
+    )
     assert report["controls"]["threshold_frozen_from_registration"] is True
+    assert report["controls"]["statistical_plan_frozen_at_split"] is True
     evaluations = registry.holdout_evaluations(version=record.version)
     assert len(evaluations) == 1
     assert evaluations[0]["split_id"] == report["holdout"]["split_id"]
@@ -139,6 +151,8 @@ def test_frozen_model_scores_holdout_once_and_can_pass_governed_promotion(tmp_pa
         maximum_holdout_drawdown=1.0,
         minimum_holdout_observations=1,
         minimum_holdout_excess_return=-1.0,
+        minimum_holdout_net_return_lower_bound=-1.0,
+        minimum_holdout_excess_return_lower_bound=-1.0,
     )
     assert promoted.version == record.version
     champion = registry.champion()
@@ -146,16 +160,14 @@ def test_frozen_model_scores_holdout_once_and_can_pass_governed_promotion(tmp_pa
     assert champion.version == record.version
     promotion = registry.history(alias="champion")[-1]
     assert promotion["details"]["holdout_evaluation"]["id"] == evaluations[0]["id"]
+    gates = promotion["details"]["promotion_gates"]
+    assert gates["minimum_holdout_net_return_lower_bound"] == -1.0
+    assert gates["minimum_holdout_excess_return_lower_bound"] == -1.0
 
 
 def test_holdout_evaluation_rejects_calibration_dataset(tmp_path) -> None:
     source = _write_source(tmp_path)
-    split_feature_dataset(
-        str(source),
-        str(tmp_path / "calibration.jsonl"),
-        str(tmp_path / "holdout.jsonl"),
-        split_time=datetime(2025, 1, 11, tzinfo=UTC),
-    )
+    _split(source, tmp_path)
     calibration, feature_names, _ = load_feature_dataset(tmp_path / "calibration.jsonl")
     model = RidgeReturnModel(feature_names)
     model.fit(calibration)
