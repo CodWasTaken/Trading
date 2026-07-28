@@ -22,6 +22,8 @@ A private, risk-first AI-assisted paper-trading platform. It ingests market data
 - Live event ledger backed by an append-only SQLite journal using `event_time` and `knowledge_time`
 - Deterministic ledger replay/integrity audit command
 - Cost-aware, multi-symbol backtests with purged walk-forward validation, a trainable return model, and a versioned champion registry
+- Stitched non-overlapping out-of-sample evaluation with horizon-correct annualization
+- Equal-weight benchmark, cash baseline, no-news ablation, and per-symbol diagnostics
 - Historical dataset and real-data training CLI with source hashes, metadata, and explicit promotion gates
 - Next.js live dashboard showing portfolio, decisions, news, positions, feed health, incidents, and system state
 - Tests for risk, fills, persistence, research, provider pagination, SEC parsing, news enrichment, model promotion, reconciliation, and leakage boundaries
@@ -152,12 +154,23 @@ trading-research train \
   --registry .trading/models \
   --minimum-train-rows 500 \
   --test-rows 100 \
-  --transaction-cost-bps 5
+  --transaction-cost-bps 5 \
+  --periods-per-year 1638
 ```
 
-Validation uses expanding multi-symbol walk-forward folds. Rows whose labels reach into a test fold are purged from that fold’s training set. Test returns are grouped by timestamp and equally allocated across the symbols present at that time rather than being compounded as unrelated sequential trades.
+Validation uses expanding multi-symbol walk-forward folds. Rows whose labels reach into a test fold are purged from that fold’s training set. Out-of-sample predictions from every fold are stitched into one chronological stream before metrics are calculated, so Sharpe is based on the complete return series rather than an average of fold Sharpes.
 
-Inspect the candidate:
+Forward labels are not compounded as if they were independent every bar. With `forecast_bars=5`, only non-overlapping five-bar horizons are used for portfolio returns. The CLI divides the source bar frequency by the label horizon automatically, so `1638` hourly market periods become `327.6` five-hour evaluation periods per year.
+
+The training output includes:
+
+- candidate metrics and the number of rows actually used after removing overlapping horizons
+- an equal-weight long benchmark and a cash baseline
+- a no-news model ablation using the same folds and costs
+- per-symbol observations, signals, returns, hit rate, and turnover
+- excess return over the benchmark and Sharpe improvement attributable to the news feature
+
+Inspect the candidate and registry:
 
 ```bash
 trading-research registry --registry .trading/models
@@ -172,10 +185,13 @@ trading-research train \
   --minimum-train-rows 500 \
   --test-rows 100 \
   --transaction-cost-bps 5 \
+  --periods-per-year 1638 \
   --promote
 ```
 
-The default real-data gates require positive net return, Sharpe above `0.25`, drawdown below `15%`, at least five folds, and at least 500 out-of-sample observations. A failed promotion request still registers the candidate and reports every failed gate without replacing the current champion.
+The default real-data gates require positive net return, Sharpe above `0.25`, drawdown below `15%`, at least five folds, at least 500 non-overlapping out-of-sample observations, positive excess return over equal-weight long, and a positive Sharpe delta versus the no-news ablation. A failed promotion request still registers the candidate and reports every failed gate without replacing the current champion.
+
+Results produced before version `0.6.0` should be rerun before comparison because older evaluation averaged fold Sharpes and compounded overlapping forward labels.
 
 ## SEC EDGAR
 
@@ -237,7 +253,7 @@ The default strategy is deliberately simple and explainable. It combines short-t
 ## Next production milestones
 
 1. Full deterministic strategy replay from historical quote/news streams
-2. Baseline and ablation reports across regimes, sectors, and individual tickers
+2. Regime, sector, event-type, and threshold-sensitivity reports
 3. Issuer/subsidiary/supplier entity linking and higher-capacity financial NLP extraction
 4. Higher-capacity champion/challenger models and experiment tracking
 5. Streaming broker trade updates, queue/partial-fill simulation, and automatic reconciliation alerts
