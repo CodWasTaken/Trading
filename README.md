@@ -2,7 +2,7 @@
 
 A private, risk-first AI-assisted paper-trading platform. It ingests market data and breaking stock news, turns those events into explainable signals, applies deterministic portfolio controls, simulates execution, and streams every decision to a live dashboard.
 
-> **Status:** functional paper-trading, data-ingestion, research, and operations foundation. It defaults to a deterministic demo feed and an internal paper broker, so it can run safely without credentials. Alpaca paper trading and real-time market/news adapters are included behind configuration flags.
+> **Status:** functional paper-trading, data-ingestion, research, replay, and operations foundation. It defaults to a deterministic demo feed and an internal paper broker, so it can run safely without credentials. Alpaca paper trading and real-time market/news adapters are included behind configuration flags.
 
 ## What is included
 
@@ -21,12 +21,14 @@ A private, risk-first AI-assisted paper-trading platform. It ingests market data
 - Live feed-age diagnostics and stale-symbol reporting
 - Live event ledger backed by an append-only SQLite journal using `event_time` and `knowledge_time`
 - Deterministic ledger replay/integrity audit command
+- Shared-engine historical replay with semantic trace hashes and double-run determinism verification
+- Daily portfolio-control rollover shared by live paper trading and historical replay
 - Cost-aware, multi-symbol backtests with purged walk-forward validation, a trainable return model, and a versioned champion registry
 - Stitched non-overlapping out-of-sample evaluation with horizon-correct annualization
 - Equal-weight benchmark, cash baseline, no-news ablation, and per-symbol diagnostics
 - Historical dataset and real-data training CLI with source hashes, metadata, and explicit promotion gates
 - Next.js live dashboard showing portfolio, decisions, news, positions, feed health, incidents, and system state
-- Tests for risk, fills, persistence, research, provider pagination, SEC parsing, news enrichment, model promotion, reconciliation, and leakage boundaries
+- Tests for risk, fills, persistence, research, provider pagination, SEC parsing, news enrichment, model promotion, reconciliation, replay determinism, and leakage boundaries
 - Docker Compose and GitHub Actions CI
 - Architecture, security, and production roadmap documentation
 
@@ -126,6 +128,29 @@ trading-research backfill news \
 
 Historical news providers generally expose source publication time, not the exact time your live system would have received the item. Treat that limitation explicitly in research metadata.
 
+### Replay the shared strategy-risk-broker path
+
+Replay the historical bars and news through the same `TradingEngine`, strategy, `RiskEngine`, portfolio, and internal paper broker used by the application:
+
+```bash
+trading-research replay \
+  --bars .trading/history/bars.jsonl \
+  --news .trading/history/news.jsonl \
+  --strategy explainable \
+  --bar-minutes 60 \
+  --spread-bps 10 \
+  --slippage-bps 2 \
+  --verify-determinism \
+  --output .trading/replays/explainable-2025.json \
+  --trace-output .trading/replays/explainable-2025.trace.jsonl
+```
+
+The report includes source hashes, risk configuration, final portfolio state, return, drawdown, event counts, rejection reasons, fill totals, and a canonical semantic trace hash. `--verify-determinism` runs the replay twice with fresh strategy state and fails if the hashes differ.
+
+Historical OHLC bars do not contain executable bid/ask quotes. Replay therefore applies the explicit `--spread-bps` value only to execution and risk simulation; the research model still does not train on a fabricated spread feature. The replay clock advances with historical knowledge time so stale-data checks remain active without comparing historical events to the current wall clock. Daily trade counts and daily P&L controls reset when the market-data date changes.
+
+Champion replay is available with `--strategy champion --registry .trading/models`. A synthetic champion is rejected by default; `--allow-synthetic-champion` exists only for pipeline diagnostics and does not make synthetic results market evidence.
+
 ### Build a genuine point-in-time dataset
 
 Convert the backfills into features and forward-return labels. `--bar-minutes` must match the bar timeframe used during backfill:
@@ -220,7 +245,7 @@ The report flags orphan fills, orders without risk decisions, orders attached to
 ## Repository layout
 
 ```text
-apps/api/trading_app/     backend domain, data, execution, persistence, and research services
+apps/api/trading_app/     backend domain, data, execution, persistence, replay, and research services
 apps/dashboard/           live Next.js dashboard
 tests/                    backend tests
 docs/                     architecture and rollout guidance
@@ -252,12 +277,11 @@ The default strategy is deliberately simple and explainable. It combines short-t
 
 ## Next production milestones
 
-1. Full deterministic strategy replay from historical quote/news streams
-2. Regime, sector, event-type, and threshold-sensitivity reports
-3. Issuer/subsidiary/supplier entity linking and higher-capacity financial NLP extraction
-4. Higher-capacity champion/challenger models and experiment tracking
-5. Streaming broker trade updates, queue/partial-fill simulation, and automatic reconciliation alerts
-6. Server-side user authentication, encrypted backups, and deployment runbooks
-7. Sixty to ninety live paper-trading days before any discussion of real funds
+1. Regime, sector, event-type, and threshold-sensitivity replay reports
+2. Issuer/subsidiary/supplier entity linking and higher-capacity financial NLP extraction
+3. Higher-capacity champion/challenger models and experiment tracking
+4. Streaming broker trade updates, queue/partial-fill simulation, and automatic reconciliation alerts
+5. Server-side user authentication, encrypted backups, and deployment runbooks
+6. Sixty to ninety live paper-trading days before any discussion of real funds
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md).
