@@ -21,7 +21,13 @@ from .dataset import (
 from .domain import NewsEvent
 from .historical import AlpacaHistoricalClient, HistoricalBar
 from .model_registry import ModelRegistry
-from .research import RidgeReturnModel, metrics_dict, synthetic_feature_rows, walk_forward
+from .research import (
+    RidgeReturnModel,
+    metrics_dict,
+    synthetic_feature_rows,
+    walk_forward,
+    walk_forward_report,
+)
 
 
 FEATURE_NAMES = ("momentum", "news_score", "volatility", "spread_bps")
@@ -184,17 +190,24 @@ def train_dataset(
     minimum_sharpe: float,
     maximum_drawdown: float,
     minimum_observations: int,
+    minimum_excess_return: float = 0.0,
+    minimum_news_sharpe_delta: float = 0.0,
 ) -> dict[str, object]:
     rows, feature_names, dataset_metadata = load_feature_dataset(dataset_path)
-    metrics = walk_forward(
+    forecast_bars = max(1, int(dataset_metadata.get("forecast_bars", 1)))
+    effective_periods_per_year = periods_per_year / forecast_bars
+    report = walk_forward_report(
         rows,
         feature_names,
         minimum_train_rows=minimum_train_rows,
         test_rows=test_rows,
         transaction_cost_bps=transaction_cost_bps,
-        periods_per_year=periods_per_year,
+        periods_per_year=effective_periods_per_year,
         threshold=threshold,
+        ridge=ridge,
     )
+    metrics = report.metrics
+    diagnostics = report.to_dict()
     model = RidgeReturnModel(feature_names, ridge=ridge)
     model.fit(rows)
     registry = ModelRegistry(registry_path)
@@ -208,13 +221,16 @@ def train_dataset(
             "rows": len(rows),
             "feature_names": list(feature_names),
             "validation": {
-                "method": "expanding_walk_forward_with_label_purge",
+                "method": "stitched_non_overlapping_expanding_walk_forward_with_label_purge",
                 "minimum_train_rows": minimum_train_rows,
                 "test_rows": test_rows,
                 "transaction_cost_bps": transaction_cost_bps,
-                "periods_per_year": periods_per_year,
+                "source_periods_per_year": periods_per_year,
+                "forecast_bars": forecast_bars,
+                "effective_periods_per_year": effective_periods_per_year,
                 "prediction_threshold": threshold,
             },
+            "diagnostics": diagnostics,
             "warning": "Historical out-of-sample evidence only; paper trading validation is still required.",
         },
     )
@@ -228,6 +244,8 @@ def train_dataset(
                 minimum_sharpe=minimum_sharpe,
                 maximum_drawdown=maximum_drawdown,
                 minimum_observations=minimum_observations,
+                minimum_excess_return=minimum_excess_return,
+                minimum_news_sharpe_delta=minimum_news_sharpe_delta,
             )
             promoted = True
         except ValueError as error:
@@ -239,6 +257,12 @@ def train_dataset(
         "rows": len(rows),
         "feature_names": list(feature_names),
         "metrics": metrics_dict(metrics),
+        "diagnostics": diagnostics,
+        "validation_periods": {
+            "source_periods_per_year": periods_per_year,
+            "forecast_bars": forecast_bars,
+            "effective_periods_per_year": effective_periods_per_year,
+        },
         "promote_requested": promote,
         "promoted": promoted,
         "promotion_gates": {
@@ -246,6 +270,8 @@ def train_dataset(
             "minimum_sharpe": minimum_sharpe,
             "maximum_drawdown": maximum_drawdown,
             "minimum_observations": minimum_observations,
+            "minimum_excess_return": minimum_excess_return,
+            "minimum_news_sharpe_delta": minimum_news_sharpe_delta,
         },
     }
     if promotion_error is not None:
@@ -332,6 +358,8 @@ def build_parser() -> argparse.ArgumentParser:
     real_train.add_argument("--minimum-sharpe", type=float, default=0.25)
     real_train.add_argument("--maximum-drawdown", type=float, default=0.15)
     real_train.add_argument("--minimum-observations", type=int, default=500)
+    real_train.add_argument("--minimum-excess-return", type=float, default=0.0)
+    real_train.add_argument("--minimum-news-sharpe-delta", type=float, default=0.0)
 
     audit = subparsers.add_parser(
         "audit-ledger", help="Replay event relationships and report integrity failures"
@@ -385,6 +413,8 @@ def main() -> None:
             minimum_sharpe=arguments.minimum_sharpe,
             maximum_drawdown=arguments.maximum_drawdown,
             minimum_observations=arguments.minimum_observations,
+            minimum_excess_return=arguments.minimum_excess_return,
+            minimum_news_sharpe_delta=arguments.minimum_news_sharpe_delta,
         )
     elif arguments.command == "audit-ledger":
         result = audit_ledger(arguments.database).to_dict()
