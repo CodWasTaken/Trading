@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     trading_database_path: str = ".trading/events.db"
     trading_strategy_mode: Literal["explainable", "champion"] = "explainable"
     trading_model_registry_path: str = ".trading/models"
+    trading_entity_catalog_path: str | None = None
     trading_cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:3000"]
     )
