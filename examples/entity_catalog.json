@@ -1,0 +1,28 @@
+{
+  "issuers": [
+    {
+      "ticker": "ACME",
+      "canonical_name": "Acme Holdings",
+      "aliases": ["Acme"],
+      "sector": "Industrials",
+      "related_entities": [
+        {
+          "canonical_name": "Precision Parts Ltd",
+          "relation": "supplier",
+          "aliases": ["Precision Parts"],
+          "ticker": "PPL"
+        },
+        {
+          "canonical_name": "Roadrunner Systems",
+          "relation": "competitor",
+          "aliases": ["Roadrunner"]
+        },
+        {
+          "canonical_name": "Acme Cloud Services",
+          "relation": "subsidiary",
+          "aliases": ["Acme Cloud"]
+        }
+      ]
+    }
+  ]
+}

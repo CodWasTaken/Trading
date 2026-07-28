@@ -63,7 +63,7 @@ async def test_historical_client_paginates_bars_and_enriches_news() -> None:
                             "headline": "Apple raises guidance after strong revenue growth",
                             "summary": "The company increased its annual outlook.",
                             "source": "Reuters",
-                            "symbols": ["AAPL"],
+                            "symbols": ["AAPL", "MSFT"],
                         }
                     ],
                     "next_page_token": None,
@@ -82,11 +82,11 @@ async def test_historical_client_paginates_bars_and_enriches_news() -> None:
     start = datetime(2026, 1, 2, 14, 30, tzinfo=UTC)
     end = datetime(2026, 1, 2, 15, 30, tzinfo=UTC)
     bars = [bar async for bar in client.iter_bars(["AAPL"], start, end)]
-    news = [item async for item in client.iter_news(["AAPL"], start, end)]
+    news = [item async for item in client.iter_news(["AAPL", "MSFT"], start, end)]
     await client.close()
 
     assert len(bars) == 2
     assert bars[-1].close == 101.5
-    assert len(news) == 1
-    assert news[0].symbol == "AAPL"
-    assert news[0].sentiment > 0
+    assert [item.symbol for item in news] == ["AAPL", "MSFT"]
+    assert all(item.sentiment > 0 for item in news)
+    assert all(item.event_type == "guidance" for item in news)
