@@ -72,6 +72,8 @@ class ModelRegistry:
         minimum_sharpe: float = 0.0,
         maximum_drawdown: float = 0.20,
         minimum_observations: int = 100,
+        minimum_excess_return: float | None = None,
+        minimum_news_sharpe_delta: float | None = None,
     ) -> ModelRecord:
         record = self.get(version)
         metrics = record.metrics
@@ -86,6 +88,18 @@ class ModelRegistry:
             failures.append("insufficient_walk_forward_folds")
         if int(metrics.get("observations", 0)) < minimum_observations:
             failures.append("insufficient_out_of_sample_observations")
+        if (
+            minimum_excess_return is not None
+            and float(metrics.get("excess_return_vs_benchmark", 0))
+            <= minimum_excess_return
+        ):
+            failures.append("benchmark_excess_return_below_gate")
+        if (
+            minimum_news_sharpe_delta is not None
+            and float(metrics.get("news_sharpe_delta", 0))
+            <= minimum_news_sharpe_delta
+        ):
+            failures.append("news_ablation_delta_below_gate")
         if failures:
             raise ValueError("Model failed promotion gates: " + ", ".join(failures))
         index = self._read()
