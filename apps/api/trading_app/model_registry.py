@@ -227,7 +227,7 @@ class ModelRegistry:
         minimum_observations: int = 100,
         minimum_excess_return: float | None = None,
         minimum_news_sharpe_delta: float | None = None,
-        require_holdout_evaluation: bool = False,
+        require_holdout_evaluation: bool = True,
         minimum_holdout_net_return: float = 0.0,
         minimum_holdout_sharpe: float = 0.0,
         maximum_holdout_drawdown: float = 0.20,
