@@ -65,13 +65,17 @@ Implemented foundation:
 - cash, equal-weight, benchmark, and no-news comparisons
 - versioned model registry with champion alias and fail-closed promotion gates
 - non-overlapping horizon evaluation and per-symbol diagnostics
+- automatic challenger alias for newly registered models
+- append-only alias history with promotion-gate snapshots
+- operator promotion, custom aliases, and champion rollback without artifact deletion
 
 Remaining production work:
 
 - higher-capacity price/news models by forecast horizon
-- independent experiment tracking, challenger aliases, and rollback
+- independent experiment manifests and comparison reports
 - drift and calibration monitoring
 - untouched holdout windows after threshold or feature selection
+- holdout-backed promotion gates rather than calibration-only metrics
 
 **Exit gate:** the candidate improves risk-adjusted out-of-sample performance across several untouched windows and regimes.
 
