@@ -29,7 +29,7 @@ def test_news_is_classified_scored_and_deduplicated() -> None:
     )
     similar = intelligence.enrich(
         symbol="AAPL",
-        headline="Apple raises annual guidance after strong revenue growth",
+        headline="Apple raises guidance after strong revenue growth",
         source="Reuters",
         event_time=now + timedelta(minutes=2),
         knowledge_time=now + timedelta(minutes=2),
