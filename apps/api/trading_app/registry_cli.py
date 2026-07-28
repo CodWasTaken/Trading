@@ -57,6 +57,18 @@ def build_parser() -> argparse.ArgumentParser:
     promote.add_argument("--maximum-holdout-drawdown", type=float, default=0.15)
     promote.add_argument("--minimum-holdout-observations", type=int, default=100)
     promote.add_argument("--minimum-holdout-excess-return", type=float, default=0.0)
+    promote.add_argument(
+        "--minimum-holdout-net-return-lower-bound",
+        type=float,
+        default=0.0,
+        help="Require the adjusted bootstrap lower bound to exceed this value",
+    )
+    promote.add_argument(
+        "--minimum-holdout-excess-return-lower-bound",
+        type=float,
+        default=0.0,
+        help="Require the adjusted benchmark-excess lower bound to exceed this value",
+    )
 
     rollback = subparsers.add_parser(
         "rollback",
@@ -119,6 +131,12 @@ def main() -> None:
             maximum_holdout_drawdown=arguments.maximum_holdout_drawdown,
             minimum_holdout_observations=arguments.minimum_holdout_observations,
             minimum_holdout_excess_return=arguments.minimum_holdout_excess_return,
+            minimum_holdout_net_return_lower_bound=(
+                arguments.minimum_holdout_net_return_lower_bound
+            ),
+            minimum_holdout_excess_return_lower_bound=(
+                arguments.minimum_holdout_excess_return_lower_bound
+            ),
             reason=arguments.reason,
         )
         result = {
