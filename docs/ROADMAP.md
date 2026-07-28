@@ -35,13 +35,18 @@ Implemented foundation:
 - explicit issuer/subsidiary/supplier/customer/competitor/partner relationship catalogs
 - immutable historical archive reclassification with before/after audits
 - ticker-scoped deduplication that retains multi-symbol articles
+- exact requested-universe filtering for historical news backfills
+- knowledge-time effective windows for catalog relationships
+- deterministic stratified human-label templates with immutable prediction hashes
+- primary, secondary, entity-link, relation, and confusion-matrix evaluation reports
 
 Remaining production work:
 
 - SEC filing facts and XBRL normalization
 - company investor-relations feeds and raw article version archive
 - curated production entity catalog with dated relationship provenance
-- labelled event and entity-linking evaluation sets
+- completed multi-reviewer event and entity-linking label sets
+- inter-annotator agreement and untouched validation archives
 - higher-capacity financial sentiment and structured extraction models
 - schema-constrained LLM extraction with deterministic fallback and disagreement review
 
