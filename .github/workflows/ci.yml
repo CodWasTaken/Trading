@@ -49,4 +49,4 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: bash scripts/runtime-smoke.sh --install
+      - run: python -m venv .venv && source .venv/bin/activate && bash scripts/runtime-smoke.sh --install
