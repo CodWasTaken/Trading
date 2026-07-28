@@ -21,6 +21,7 @@ from .dataset import (
 from .domain import NewsEvent
 from .historical import AlpacaHistoricalClient, HistoricalBar
 from .model_registry import ModelRegistry
+from .replay_cli import replay_history
 from .research import (
     RidgeReturnModel,
     metrics_dict,
@@ -306,7 +307,7 @@ def _sha256(path: Path) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Trading data, research, registry, and audit tools"
+        description="Trading data, research, registry, replay, and audit tools"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     train = subparsers.add_parser(
@@ -360,6 +361,25 @@ def build_parser() -> argparse.ArgumentParser:
     real_train.add_argument("--minimum-observations", type=int, default=500)
     real_train.add_argument("--minimum-excess-return", type=float, default=0.0)
     real_train.add_argument("--minimum-news-sharpe-delta", type=float, default=0.0)
+
+    replay = subparsers.add_parser(
+        "replay",
+        help="Replay historical bars/news through the shared strategy-risk-broker engine",
+    )
+    replay.add_argument("--bars", required=True, help="Historical bars JSON Lines")
+    replay.add_argument("--news", required=True, help="Historical news JSON Lines")
+    replay.add_argument("--output", required=True, help="Replay report JSON")
+    replay.add_argument("--trace-output", help="Optional canonical event trace JSON Lines")
+    replay.add_argument(
+        "--strategy", choices=("explainable", "champion"), default="explainable"
+    )
+    replay.add_argument("--registry", default=".trading/models")
+    replay.add_argument("--allow-synthetic-champion", action="store_true")
+    replay.add_argument("--verify-determinism", action="store_true")
+    replay.add_argument("--bar-minutes", type=int, default=60)
+    replay.add_argument("--spread-bps", type=float, default=10.0)
+    replay.add_argument("--slippage-bps", type=float, default=2.0)
+    replay.add_argument("--starting-cash", type=float)
 
     audit = subparsers.add_parser(
         "audit-ledger", help="Replay event relationships and report integrity failures"
@@ -415,6 +435,23 @@ def main() -> None:
             minimum_observations=arguments.minimum_observations,
             minimum_excess_return=arguments.minimum_excess_return,
             minimum_news_sharpe_delta=arguments.minimum_news_sharpe_delta,
+        )
+    elif arguments.command == "replay":
+        result = asyncio.run(
+            replay_history(
+                arguments.bars,
+                arguments.news,
+                arguments.output,
+                trace_output=arguments.trace_output,
+                strategy_mode=arguments.strategy,
+                registry_path=arguments.registry,
+                allow_synthetic_champion=arguments.allow_synthetic_champion,
+                verify_determinism=arguments.verify_determinism,
+                bar_minutes=arguments.bar_minutes,
+                spread_bps=arguments.spread_bps,
+                slippage_bps=arguments.slippage_bps,
+                starting_cash=arguments.starting_cash,
+            )
         )
     elif arguments.command == "audit-ledger":
         result = audit_ledger(arguments.database).to_dict()

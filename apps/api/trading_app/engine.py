@@ -32,6 +32,7 @@ class TradingEngine:
     async def process_quote(self, quote: Quote) -> None:
         await self.store.set_quote(quote)
         self.portfolio.mark(quote)
+        self.portfolio.rollover_session(quote.event_time)
         news = await self.store.recent_news_for(quote.symbol)
         snapshot = self.portfolio.snapshot()
         proposal = self.strategy.on_quote(quote, news, snapshot.equity)
