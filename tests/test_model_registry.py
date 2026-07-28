@@ -23,7 +23,7 @@ def test_registry_registers_and_promotes_champion(tmp_path) -> None:
     )
     registry = ModelRegistry(tmp_path)
     record = registry.register(model, metrics)
-    registry.promote(record.version)
+    registry.promote(record.version, require_holdout_evaluation=False)
     champion = registry.champion()
     assert champion is not None
     assert champion.version == record.version
@@ -57,6 +57,7 @@ def test_registry_can_require_benchmark_and_news_value(tmp_path) -> None:
             record.version,
             minimum_excess_return=0.0,
             minimum_news_sharpe_delta=0.0,
+            require_holdout_evaluation=False,
         )
 
     message = str(raised.value)
