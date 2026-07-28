@@ -141,6 +141,7 @@ def build_label_set(
             "deterministic_sampling": True,
             "immutable_source_columns_hashed_per_row": True,
             "future_text_not_joined": True,
+            "spreadsheet_formula_prefixes_escaped": True,
         },
     }
     metadata_destination.write_text(
@@ -401,9 +402,9 @@ def _label_row(event: NewsEvent) -> dict[str, str]:
         "symbol": event.symbol,
         "event_time": event.event_time.astimezone(UTC).isoformat(),
         "knowledge_time": event.knowledge_time.astimezone(UTC).isoformat(),
-        "source": event.source,
-        "headline": event.headline,
-        "summary": event.summary,
+        "source": _spreadsheet_safe(event.source),
+        "headline": _spreadsheet_safe(event.headline),
+        "summary": _spreadsheet_safe(event.summary),
         "predicted_primary_event_type": event.event_type,
         "predicted_secondary_event_types_json": json.dumps(
             event.secondary_event_types,
@@ -679,6 +680,12 @@ def _f1(precision: float, recall: float) -> float:
 def _mean(values: Any) -> float:
     items = list(values)
     return sum(items) / len(items) if items else 0.0
+
+
+def _spreadsheet_safe(value: str) -> str:
+    if value and value[0] in "=+-@\t\r":
+        return "'" + value
+    return value
 
 
 def _sha256(path: Path) -> str:
