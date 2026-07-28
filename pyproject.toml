@@ -33,3 +33,21 @@ package-dir = {"" = "apps/api"}
 
 [tool.setuptools.packages.find]
 where = ["apps/api"]
+
+[tool.pytest.ini_options]
+pythonpath = ["apps/api"]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["trading_app"]
+mypy_path = "apps/api"
