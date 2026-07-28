@@ -23,6 +23,7 @@ type Portfolio = {
 
 type LedgerItem = Record<string, unknown>;
 type Summary = {
+  application_version: string;
   portfolio: Portfolio;
   kill_switch: boolean;
   engine_running: boolean;
@@ -274,6 +275,10 @@ export default function Dashboard() {
 
         <Panel title="System state" subtitle="Fail-closed controls">
           <dl className="facts">
+            <div>
+              <dt>Version</dt>
+              <dd>{summary.application_version}</dd>
+            </div>
             <div>
               <dt>Engine</dt>
               <dd>{summary.engine_running ? "running" : "paused"}</dd>
