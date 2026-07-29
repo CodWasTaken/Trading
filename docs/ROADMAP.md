@@ -95,6 +95,26 @@ Implemented in version 0.21.0:
 Passing these gates changes only the historical champion alias. It does not
 authorize live-money execution or establish profitability.
 
+## Paper-only graduation
+
+Implemented in version 0.22.0:
+
+- deterministic full-engine replay and replay-diagnostics requirements
+- at least 60 reconciled paper trading days, with 90 days reported as preferred
+- zero unexplained broker differences, unresolved data-quality incidents, and
+  borrow violations
+- healthy drift and calibration monitoring for the exact champion version
+- positive combined, long-only, and short-only cost-adjusted contribution
+- drawdown, tail-loss, symbol, sector, event-type, and regime gates
+- reporting split by direction, news use, symbol, sector, event type, regime,
+  execution costs, borrow, margin interest, dividend replacement, and FX funding
+- immutable registry history bound to hashes of operator evidence and its source
+  ledger
+- hard preservation of paper-only scope after passing
+
+Graduation is operational evidence for continuing paper evaluation. It neither
+authorizes live-money trading nor establishes profitability.
+
 ## Milestone 1 — durable data and replay
 
 Implemented foundation:

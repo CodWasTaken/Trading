@@ -40,6 +40,8 @@ flowchart LR
 - `cost_model.py`: versioned execution, financing, funding/FX, and tax assumptions
 - `tax.py`: separate estimated Polish tax reporting; never a per-fill deduction
 - `universe.py`: frozen-universe hash, source, date, symbol, and binding checks
+- `graduation.py`: immutable 60–90 day paper evidence, reconciliation,
+  monitoring, attribution, and paper-only graduation gates
 - `store.py`: event ledger and WebSocket fan-out
 - `engine.py`: orchestration only; no hidden trading policy
 - `main.py`: HTTP/WebSocket interface and lifecycle
@@ -107,3 +109,15 @@ records a conversion cash flow, never automatically on trade turnover. Strategy
 performance remains pre-tax after execution and financing costs. Polish tax is
 a separate estimated report with a separate after-tax summary; it does not alter
 fills or the pre-tax equity curve and is not tax advice.
+
+## Paper graduation boundary
+
+Historical promotion and paper graduation are separate append-only registry
+events. Graduation consumes operator-exported paper evidence bound to a hashed
+source ledger, deterministic shared-engine replay, replay diagnostics, and
+healthy model monitoring. It reports long, short, news/non-news, symbol, sector,
+event-type, regime, execution-cost, and financing-cost attribution.
+
+Every reconciliation day must match and every required input fails closed.
+Passing preserves `execution_scope=paper_only` and
+`live_money_authorized=false`; there is no runtime transition to live trading.

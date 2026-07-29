@@ -10,7 +10,7 @@ from uuid import uuid4
 from .promotion import PromotionGateConfig
 from .research import BacktestMetrics, RidgeReturnModel, metrics_dict
 
-REGISTRY_SCHEMA_VERSION = 3
+REGISTRY_SCHEMA_VERSION = 4
 _ALIAS_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
 
@@ -38,6 +38,7 @@ class ModelRegistry:
             "aliases": {},
             "alias_history": [],
             "holdout_evaluations": [],
+            "paper_graduations": [],
         }
 
     def _read(self) -> dict[str, object]:
@@ -48,6 +49,7 @@ class ModelRegistry:
         aliases = payload.get("aliases", {})
         history = payload.get("alias_history", [])
         holdout_evaluations = payload.get("holdout_evaluations", [])
+        paper_graduations = payload.get("paper_graduations", [])
         if not isinstance(models, dict):
             raise ValueError("Model registry models must be an object")
         if not isinstance(aliases, dict):
@@ -56,12 +58,15 @@ class ModelRegistry:
             raise ValueError("Model registry alias_history must be a list")
         if not isinstance(holdout_evaluations, list):
             raise ValueError("Model registry holdout_evaluations must be a list")
+        if not isinstance(paper_graduations, list):
+            raise ValueError("Model registry paper_graduations must be a list")
         return {
             "schema_version": REGISTRY_SCHEMA_VERSION,
             "models": models,
             "aliases": aliases,
             "alias_history": history,
             "holdout_evaluations": holdout_evaluations,
+            "paper_graduations": paper_graduations,
         }
 
     def _write(self, payload: dict[str, object]) -> None:
@@ -216,6 +221,59 @@ class ModelRegistry:
     def latest_holdout_evaluation(self, version: str) -> dict[str, object] | None:
         evaluations = self.holdout_evaluations(version=version)
         return evaluations[-1] if evaluations else None
+
+    def record_paper_graduation(
+        self,
+        version: str,
+        *,
+        report_path: str,
+        report_sha256: str,
+        paper_evidence_sha256: str,
+        passed: bool,
+        status: str,
+        gates: object,
+    ) -> dict[str, object]:
+        self.get(version)
+        index = self._read()
+        events = list(index["paper_graduations"])
+        if any(
+            isinstance(item, dict)
+            and item.get("model_version") == version
+            and item.get("paper_evidence_sha256") == paper_evidence_sha256
+            for item in events
+        ):
+            raise ValueError("This model and paper evidence hash already have a graduation record")
+        event: dict[str, object] = {
+            "id": uuid4().hex,
+            "evaluated_at": datetime.now(UTC).isoformat(),
+            "model_version": version,
+            "report_path": report_path,
+            "report_sha256": report_sha256,
+            "paper_evidence_sha256": paper_evidence_sha256,
+            "passed": passed,
+            "status": status,
+            "execution_scope": "paper_only",
+            "live_money_authorized": False,
+            "gates": gates,
+        }
+        events.append(event)
+        index["paper_graduations"] = events
+        self._write(index)
+        return event
+
+    def paper_graduations(
+        self,
+        *,
+        version: str | None = None,
+    ) -> list[dict[str, object]]:
+        if version is not None:
+            self.get(version)
+        return [
+            dict(event)
+            for event in self._read()["paper_graduations"]
+            if isinstance(event, dict)
+            and (version is None or event.get("model_version") == version)
+        ]
 
     def promote(
         self,

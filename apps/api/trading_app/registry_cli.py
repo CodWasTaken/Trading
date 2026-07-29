@@ -33,6 +33,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     holdouts.add_argument("--version")
 
+    graduations = subparsers.add_parser(
+        "graduations",
+        help="Print immutable paper-only graduation records",
+    )
+    graduations.add_argument("--version")
+
     alias = subparsers.add_parser(
         "set-alias",
         help="Move a non-champion alias to a registered model",
@@ -108,6 +114,12 @@ def main() -> None:
             "registry": arguments.registry,
             "version": arguments.version,
             "evaluations": registry.holdout_evaluations(version=arguments.version),
+        }
+    elif arguments.command == "graduations":
+        result = {
+            "registry": arguments.registry,
+            "version": arguments.version,
+            "evaluations": registry.paper_graduations(version=arguments.version),
         }
     elif arguments.command == "set-alias":
         if arguments.alias.strip().lower() == "champion":
