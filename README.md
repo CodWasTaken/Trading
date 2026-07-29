@@ -37,6 +37,8 @@ A private, risk-first AI-assisted paper-trading platform. It ingests market data
 - Deterministic generations of exactly 100 calibration-only candidates with
   nested purged validation, resumable bounded execution, composite ranking,
   and three frozen holdout finalists
+- Fail-closed paper-only graduation from immutable operator evidence after at
+  least 60 reconciled trading days, with 90 days preferred
 - Equal-weight benchmark, cash baseline, no-news ablation, and per-symbol diagnostics
 - Historical dataset and real-data training CLI with source hashes, metadata, and explicit promotion gates
 - Next.js live dashboard showing portfolio, decisions, news, positions, feed health, incidents, and system state
@@ -144,6 +146,27 @@ The ETB list above is an operator-supplied paper assumption, not inferred
 borrow availability. Omit a symbol or leave the list empty and attempts to open
 that short are rejected. Broker recalls are represented as auditable forced-cover
 instructions; they never bypass the paper-only broker boundary.
+
+### Paper-only graduation
+
+A historical champion remains paper-only. After at least 60 paper trading days,
+evaluate immutable operator-exported evidence, a deterministic full-engine
+replay, replay diagnostics, and healthy drift/calibration reports:
+
+```bash
+trading-graduation \
+  --registry .trading/models \
+  --paper-evidence .trading/graduation/paper-evidence.json \
+  --replay .trading/replay/report.json \
+  --replay-diagnostics .trading/replay/diagnostics.json \
+  --monitoring .trading/monitoring/latest.json \
+  --output .trading/graduation/report.json
+```
+
+Passing records an immutable `paper_only_graduated` event. It does not enable,
+create, or imply a live-money execution path. See
+[`docs/PAPER_GRADUATION.md`](docs/PAPER_GRADUATION.md) and
+[`docs/OPERATING_GUIDE.md`](docs/OPERATING_GUIDE.md).
 
 ### Historical backfills
 

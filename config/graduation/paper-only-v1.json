@@ -1,0 +1,19 @@
+{
+  "maximum_borrow_violations": 0,
+  "maximum_drawdown": 0.15,
+  "maximum_event_type_pnl_contribution": 0.5,
+  "maximum_regime_pnl_contribution": 0.5,
+  "maximum_sector_pnl_contribution": 0.35,
+  "maximum_symbol_pnl_contribution": 0.2,
+  "maximum_tail_loss": 0.05,
+  "maximum_unexplained_reconciliation_differences": 0,
+  "maximum_unresolved_data_quality_incidents": 0,
+  "minimum_combined_net_pnl": 0.0,
+  "minimum_long_net_pnl": 0.0,
+  "minimum_short_net_pnl": 0.0,
+  "minimum_trading_days": 60,
+  "name": "paper-only-graduation-v1",
+  "pnl_reconciliation_tolerance": 0.01,
+  "preferred_trading_days": 90,
+  "schema_version": 1
+}
