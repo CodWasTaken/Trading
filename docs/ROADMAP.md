@@ -52,6 +52,27 @@ The declaration source is not a substitute for archived point-in-time vendor
 evidence. A later list must receive a new universe ID and effective date; it
 cannot retroactively redefine an earlier experiment or untouched holdout.
 
+## Deterministic candidate generations
+
+Implemented in version 0.20.0:
+
+- exactly 100 unique configurations, generated or supplied, per generation
+- deterministic seeds and configuration fingerprints
+- calibration-only nested, purged, chronological validation with at least
+  eight outer folds
+- bounded parallel execution, per-candidate artifacts and failures, and safe
+  resumption against a hashed immutable generation manifest
+- predeclared composite ranking across return, excess return, risk, stability,
+  concentration, turnover, long/short balance, news ablation, threshold
+  robustness, and borrow dependence
+- at most ten generations with a three-stale-generation stopping rule
+- exactly three frozen finalists and an explicit `candidate_family_size=3`
+  boundary for the later sealed holdout
+
+The generator has no holdout input and rejects any dataset marked sealed or
+`untouched_holdout`. Candidate rankings are calibration evidence, not promotion
+evidence or a profitability claim.
+
 ## Milestone 1 — durable data and replay
 
 Implemented foundation:

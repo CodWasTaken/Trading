@@ -34,6 +34,9 @@ A private, risk-first AI-assisted paper-trading platform. It ingests market data
 - Daily portfolio-control rollover shared by live paper trading and historical replay
 - Cost-aware, multi-symbol backtests with purged walk-forward validation, a trainable return model, and a versioned champion registry
 - Stitched non-overlapping out-of-sample evaluation with horizon-correct annualization
+- Deterministic generations of exactly 100 calibration-only candidates with
+  nested purged validation, resumable bounded execution, composite ranking,
+  and three frozen holdout finalists
 - Equal-weight benchmark, cash baseline, no-news ablation, and per-symbol diagnostics
 - Historical dataset and real-data training CLI with source hashes, metadata, and explicit promotion gates
 - Next.js live dashboard showing portfolio, decisions, news, positions, feed health, incidents, and system state
@@ -205,6 +208,26 @@ The command writes the feature rows plus an adjacent `.metadata.json` file conta
 Historical OHLC bars contain no bid/ask quotes. The historical model therefore trains on momentum, news score, and volatility instead of fabricating a spread feature. Live spread checks remain mandatory in the risk engine.
 
 ### Train and validate a candidate
+
+For a governed search, run exactly 100 predeclared configurations on calibration
+data only:
+
+```bash
+trading-candidates \
+  --dataset .trading/datasets/calibration.jsonl \
+  --output .trading/candidates/generation-1 \
+  --generation 1 \
+  --seed 1729 \
+  --max-workers 4
+```
+
+The command rejects sealed holdouts, duplicate or non-100 configuration sets,
+fewer than eight nested chronological folds, mismatched frozen universes, and
+non-five-bar governed experiments. It preserves every configuration, metric,
+failure, model artifact, cost manifest, and input hash. Only the top three
+calibration-ranked candidates are frozen for the one-time sealed-holdout stage;
+the other 97 must never be scored there. See
+[`docs/CANDIDATE_GENERATIONS.md`](docs/CANDIDATE_GENERATIONS.md).
 
 First register a candidate without promotion:
 
