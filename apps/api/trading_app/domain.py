@@ -116,7 +116,22 @@ class Fill(BaseModel):
     quantity: float = Field(gt=0)
     price: float = Field(gt=0)
     slippage_bps: float
+    observed_spread_cost: float = Field(default=0.0, ge=0)
+    slippage_cost: float = Field(default=0.0, ge=0)
+    commission: float = Field(default=0.0, ge=0)
+    regulatory_fees: float = Field(default=0.0, ge=0)
+    market_impact_stress_cost: float = Field(default=0.0, ge=0)
     filled_at: datetime = Field(default_factory=utc_now)
+
+    @computed_field
+    @property
+    def cash_fees(self) -> float:
+        return self.commission + self.regulatory_fees + self.market_impact_stress_cost
+
+    @computed_field
+    @property
+    def total_execution_cost(self) -> float:
+        return self.observed_spread_cost + self.slippage_cost + self.cash_fees
 
 
 class Position(BaseModel):
@@ -170,6 +185,10 @@ class PortfolioSnapshot(BaseModel):
     short_unrealized_pnl: float = 0.0
     borrow_costs: float = 0.0
     dividend_replacement_costs: float = 0.0
+    margin_interest_costs: float = 0.0
+    execution_costs: float = 0.0
+    cash_execution_fees: float = 0.0
+    funding_fx_costs: float = 0.0
     daily_pnl: float
     drawdown: float
     positions: list[Position]

@@ -183,3 +183,5 @@ def test_cli_builds_and_trains_real_dataset(tmp_path) -> None:
     assert result["diagnostics"]["no_news_ablation"] is not None
     assert "equal_weight_long" in result["diagnostics"]
     assert set(result["diagnostics"]["symbols"]) == {"AAPL", "MSFT"}
+    assert result["cost_model"]["manifest"]["schema_version"] == 1
+    assert result["cost_model"]["manifest_sha256"]

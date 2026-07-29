@@ -7,10 +7,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from statistics import fmean, pstdev
 
+from .cost_model import CostModelConfig, legacy_cost_model
 from .dataset import dataset_metadata_path, load_feature_dataset
 from .model_registry import ModelRegistry
 from .research import _ScoredRow, _simulate, metrics_dict
-
 
 _Z_BOUNDS = (
     float("-inf"),
@@ -109,6 +109,17 @@ def evaluate_model_monitoring(
         raise ValueError(
             "Registered model validation configuration is incomplete"
         ) from error
+    raw_cost_model = validation.get("cost_model")
+    cost_model = (
+        legacy_cost_model(transaction_cost_bps)
+        if raw_cost_model is None
+        else CostModelConfig.model_validate(raw_cost_model)
+    )
+    if validation.get("cost_model_sha256") not in {
+        None,
+        cost_model.manifest_sha256,
+    }:
+        raise ValueError("Registered cost model hash does not match its manifest")
 
     reference_predictions = [model.predict(row.features) for row in reference_rows]
     recent_predictions = [model.predict(row.features) for row in recent_rows]
@@ -188,6 +199,7 @@ def evaluate_model_monitoring(
         periods_per_year=periods_per_year,
         folds=1,
         purged_rows=0,
+        cost_model=cost_model,
     )
     recent_simulation = _simulate(
         recent_scored,
@@ -196,6 +208,7 @@ def evaluate_model_monitoring(
         periods_per_year=periods_per_year,
         folds=1,
         purged_rows=0,
+        cost_model=cost_model,
     )
 
     alerts: list[dict[str, object]] = []
@@ -306,6 +319,8 @@ def evaluate_model_monitoring(
             "feature_names": list(reference_names),
             "prediction_threshold": threshold,
             "transaction_cost_bps": transaction_cost_bps,
+            "cost_model": cost_model.model_dump(mode="json"),
+            "cost_model_sha256": cost_model.manifest_sha256,
             "effective_periods_per_year": periods_per_year,
         },
         "gates": {

@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from .audit import audit_ledger
 from .config import get_settings
+from .cost_model import legacy_cost_model, load_cost_model
 from .dataset import (
     HISTORICAL_FEATURE_NAMES,
     HistoricalPointInTimeDatasetBuilder,
@@ -31,14 +32,14 @@ from .research import (
     walk_forward_report,
 )
 
-
 FEATURE_NAMES = ("momentum", "news_score", "volatility", "spread_bps")
 ModelType = TypeVar("ModelType", bound=BaseModel)
 
 
 def demo_train(rows: int, registry_path: str, promote: bool) -> dict[str, object]:
     dataset = synthetic_feature_rows(rows)
-    metrics = walk_forward(dataset, FEATURE_NAMES)
+    cost_model = legacy_cost_model(5.0)
+    metrics = walk_forward(dataset, FEATURE_NAMES, cost_model=cost_model)
     model = RidgeReturnModel(FEATURE_NAMES)
     model.fit(dataset)
     registry = ModelRegistry(registry_path)
@@ -49,6 +50,11 @@ def demo_train(rows: int, registry_path: str, promote: bool) -> dict[str, object
             "dataset": "synthetic_fixture",
             "warning": "For pipeline verification only; not market evidence",
             "rows": rows,
+            "validation": {
+                "cost_model": cost_model.model_dump(mode="json"),
+                "cost_model_sha256": cost_model.manifest_sha256,
+                "transaction_cost_bps": 5.0,
+            },
         },
     )
     promoted = False
@@ -201,10 +207,16 @@ def train_dataset(
     minimum_observations: int,
     minimum_excess_return: float = 0.0,
     minimum_news_sharpe_delta: float = 0.0,
+    cost_config_path: str | None = None,
 ) -> dict[str, object]:
     rows, feature_names, dataset_metadata = load_feature_dataset(dataset_path)
     forecast_bars = max(1, int(dataset_metadata.get("forecast_bars", 1)))
     effective_periods_per_year = periods_per_year / forecast_bars
+    cost_model = (
+        legacy_cost_model(transaction_cost_bps)
+        if cost_config_path is None
+        else load_cost_model(cost_config_path)
+    )
     report = walk_forward_report(
         rows,
         feature_names,
@@ -214,6 +226,7 @@ def train_dataset(
         periods_per_year=effective_periods_per_year,
         threshold=threshold,
         ridge=ridge,
+        cost_model=cost_model,
     )
     metrics = report.metrics
     diagnostics = report.to_dict()
@@ -234,6 +247,9 @@ def train_dataset(
                 "minimum_train_rows": minimum_train_rows,
                 "test_rows": test_rows,
                 "transaction_cost_bps": transaction_cost_bps,
+                "cost_model": cost_model.model_dump(mode="json"),
+                "cost_model_sha256": cost_model.manifest_sha256,
+                "cost_model_source": cost_config_path,
                 "source_periods_per_year": periods_per_year,
                 "forecast_bars": forecast_bars,
                 "effective_periods_per_year": effective_periods_per_year,
@@ -267,6 +283,11 @@ def train_dataset(
         "feature_names": list(feature_names),
         "metrics": metrics_dict(metrics),
         "diagnostics": diagnostics,
+        "cost_model": {
+            "manifest": cost_model.model_dump(mode="json"),
+            "manifest_sha256": cost_model.manifest_sha256,
+            "source": cost_config_path,
+        },
         "validation_periods": {
             "source_periods_per_year": periods_per_year,
             "forecast_bars": forecast_bars,
@@ -360,6 +381,11 @@ def build_parser() -> argparse.ArgumentParser:
     real_train.add_argument("--minimum-train-rows", type=int, default=500)
     real_train.add_argument("--test-rows", type=int, default=100)
     real_train.add_argument("--transaction-cost-bps", type=float, default=5.0)
+    real_train.add_argument(
+        "--cost-config",
+        default="config/costs/conservative-us-paper-v1.json",
+        help="Versioned execution/funding/tax cost manifest JSON",
+    )
     real_train.add_argument("--periods-per-year", type=int, default=1638)
     real_train.add_argument("--threshold", type=float, default=0.0005)
     real_train.add_argument("--ridge", type=float, default=0.001)
@@ -480,6 +506,7 @@ def main() -> None:
             minimum_observations=arguments.minimum_observations,
             minimum_excess_return=arguments.minimum_excess_return,
             minimum_news_sharpe_delta=arguments.minimum_news_sharpe_delta,
+            cost_config_path=arguments.cost_config,
         )
     elif arguments.command == "replay":
         result = asyncio.run(

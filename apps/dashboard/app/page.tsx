@@ -27,6 +27,9 @@ type Portfolio = {
   short_unrealized_pnl: number;
   borrow_costs: number;
   dividend_replacement_costs: number;
+  margin_interest_costs: number;
+  execution_costs: number;
+  funding_fx_costs: number;
   daily_pnl: number;
   drawdown: number;
   positions: Position[];
@@ -52,6 +55,13 @@ type Summary = {
     orders: LedgerItem[];
     fills: LedgerItem[];
     system_events: LedgerItem[];
+  };
+  estimated_polish_tax: {
+    status: string;
+    estimated_tax: number;
+    pre_tax_strategy_equity: number;
+    estimated_after_tax_equity: number;
+    funding_fx_cost: number;
   };
 };
 
@@ -185,6 +195,22 @@ export default function Dashboard() {
         <Metric label="Drawdown" value={percent.format(portfolio.drawdown)} />
         <Metric label="Cash" value={money.format(portfolio.cash)} />
         <Metric label="Buying power" value={money.format(portfolio.buying_power)} />
+        <Metric
+          label="Execution costs"
+          value={money.format(portfolio.execution_costs)}
+        />
+        <Metric
+          label="Financing costs"
+          value={money.format(
+            portfolio.borrow_costs +
+              portfolio.dividend_replacement_costs +
+              portfolio.margin_interest_costs,
+          )}
+        />
+        <Metric
+          label="Est. after-tax equity"
+          value={money.format(summary.estimated_polish_tax.estimated_after_tax_equity)}
+        />
         <Metric label="Trades today" value={String(portfolio.trades_today)} />
       </section>
 

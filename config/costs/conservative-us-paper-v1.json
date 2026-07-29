@@ -1,0 +1,22 @@
+{
+  "execution": {
+    "borrow_rate_annual": 0.03,
+    "commission_bps": 0.0,
+    "dividend_replacement_rate_annual": 0.02,
+    "margin_interest_rate_annual": 0.08,
+    "market_impact_stress_bps": 2.0,
+    "observed_spread_bps": 10.0,
+    "regulatory_sell_fee_bps": 0.05,
+    "slippage_bps": 2.0
+  },
+  "funding": {
+    "conversion_amount_usd": 0.0,
+    "pln_to_usd_conversion_bps": 0.0
+  },
+  "name": "conservative-us-paper-v1",
+  "polish_tax": {
+    "estimated_capital_gains_rate": 0.19,
+    "prior_loss_offset_usd": 0.0
+  },
+  "schema_version": 1
+}
