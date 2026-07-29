@@ -273,7 +273,14 @@ trading-research train \
   --promote
 ```
 
-The default real-data gates require positive net return, Sharpe above `0.25`, drawdown below `15%`, at least five folds, at least 500 non-overlapping out-of-sample observations, positive excess return over equal-weight long, and a positive Sharpe delta versus the no-news ablation. A failed promotion request still registers the candidate and reports every failed gate without replacing the current champion.
+The versioned default gate manifest requires at least eight calibration folds,
+1,000 scored observations, positive cost-adjusted net and benchmark-excess
+returns, Sharpe above `0.50`, and drawdown below `15%`. A sealed holdout may
+contain at most three finalists and must have at least 300 observations,
+positive net and excess returns, positive multiplicity-adjusted lower bounds,
+and drawdown below `15%`. Symbol/sector concentration and short borrow/exposure
+evidence are mandatory and fail closed when absent. A failed promotion never
+replaces the current champion.
 
 Results produced before version `0.6.0` should be rerun before comparison because older evaluation averaged fold Sharpes and compounded overlapping forward labels.
 

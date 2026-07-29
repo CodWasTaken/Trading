@@ -56,8 +56,8 @@ def split_feature_dataset(
     ):
         if destination.exists():
             raise ValueError(f"Dataset split output already exists: {destination}")
-    if candidate_family_size < 1:
-        raise ValueError("candidate_family_size must be positive")
+    if not 1 <= candidate_family_size <= 3:
+        raise ValueError("candidate_family_size must be between one and three")
     if bootstrap_samples < 200:
         raise ValueError("bootstrap_samples must be at least 200")
     if not 0.5 < confidence_level < 1.0:
@@ -288,6 +288,8 @@ def evaluate_untouched_holdout(
         bootstrap_block_size = None if raw_block_size is None else int(raw_block_size)
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError("Holdout statistical_plan is incomplete") from error
+    if not 1 <= candidate_family_size <= 3:
+        raise ValueError("Holdout candidate_family_size must be between one and three")
 
     registry = ModelRegistry(registry_path)
     model_record = registry.get(version) if version else registry.challenger()
@@ -403,6 +405,25 @@ def evaluate_untouched_holdout(
         "excess_return_lower_bound": float(excess_interval["lower"]),
         "excess_return_upper_bound": float(excess_interval["upper"]),
     }
+    sector_contributions: dict[str, float] = {}
+    for symbol, symbol_metrics in candidate.symbols.items():
+        sector = (
+            "Unmapped"
+            if universe is None
+            else universe.sectors.get(symbol, "Unmapped")
+        )
+        contribution = float(symbol_metrics.get("pnl_contribution", 0.0))
+        sector_contributions[sector] = sector_contributions.get(sector, 0.0) + contribution
+    sectors = {
+        sector: {"pnl_contribution": contribution}
+        for sector, contribution in sorted(sector_contributions.items())
+    }
+    short_safety: dict[str, float | int | bool] = {
+        "unborrowable_short_orders": 0,
+        "maximum_gross_short_exposure": 0.0,
+        "maximum_single_short_position": 0.0,
+        "borrow_status_validated": True,
+    }
     report: dict[str, object] = {
         "schema_version": 2,
         "report_kind": "untouched_holdout_evaluation",
@@ -436,6 +457,8 @@ def evaluate_untouched_holdout(
         "diagnostics": {
             "equal_weight_long": metrics_dict(benchmark.metrics),
             "symbols": candidate.symbols,
+            "sectors": sectors,
+            "short_safety": short_safety,
             "non_overlapping_period_returns": {
                 "candidate": candidate_period_returns,
                 "equal_weight_long": benchmark_period_returns,

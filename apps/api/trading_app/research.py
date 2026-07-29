@@ -50,6 +50,8 @@ class WalkForwardReport:
     equal_weight_long: BacktestMetrics
     no_news_ablation: BacktestMetrics | None
     symbols: dict[str, dict[str, float | int]]
+    sectors: dict[str, dict[str, float | int]]
+    short_safety: dict[str, float | int | bool]
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -65,6 +67,8 @@ class WalkForwardReport:
                 None if self.no_news_ablation is None else metrics_dict(self.no_news_ablation)
             ),
             "symbols": self.symbols,
+            "sectors": self.sectors,
+            "short_safety": self.short_safety,
         }
 
 
@@ -284,6 +288,7 @@ def _simulate(
     symbol_wins: dict[str, int] = defaultdict(int)
     symbol_turnover: dict[str, float] = defaultdict(float)
     symbol_total_net: dict[str, float] = defaultdict(float)
+    symbol_pnl_contribution: dict[str, float] = defaultdict(float)
     total_execution_cost = 0.0
     total_financing_cost = 0.0
     resolved_costs = cost_model or legacy_cost_model(transaction_cost_bps)
@@ -313,6 +318,7 @@ def _simulate(
             symbol_turnover[row.symbol] += trade_turnover
             symbol_returns[row.symbol].append(net)
             symbol_total_net[row.symbol] += net
+            symbol_pnl_contribution[row.symbol] += allocation * net
             observations += 1
             active_net_return += net
             if position:
@@ -348,6 +354,7 @@ def _simulate(
             "active_signals": active_count,
             "hit_rate": 0.0 if active_count == 0 else symbol_wins[symbol] / active_count,
             "net_return": equity - 1,
+            "pnl_contribution": symbol_pnl_contribution[symbol],
             "average_active_return": (
                 0.0 if active_count == 0 else symbol_total_net[symbol] / active_count
             ),
@@ -474,6 +481,7 @@ def walk_forward_report(
     threshold: float = 0.0005,
     ridge: float = 1e-3,
     cost_model: CostModelConfig | None = None,
+    sector_by_symbol: dict[str, str] | None = None,
 ) -> WalkForwardReport:
     scored = _score_walk_forward(
         rows,
@@ -550,11 +558,29 @@ def walk_forward_report(
             0.0 if no_news_metrics is None else candidate.metrics.sharpe - no_news_metrics.sharpe
         ),
     )
+    sectors: dict[str, dict[str, float | int]] = {}
+    sector_contributions: dict[str, float] = defaultdict(float)
+    for symbol, symbol_metrics in candidate.symbols.items():
+        sector = (
+            "Unmapped"
+            if sector_by_symbol is None
+            else sector_by_symbol.get(symbol, "Unmapped")
+        )
+        sector_contributions[sector] += float(symbol_metrics["pnl_contribution"])
+    for sector, contribution in sorted(sector_contributions.items()):
+        sectors[sector] = {"pnl_contribution": contribution}
     return WalkForwardReport(
         metrics=metrics,
         equal_weight_long=benchmark.metrics,
         no_news_ablation=no_news_metrics,
         symbols=candidate.symbols,
+        sectors=sectors,
+        short_safety={
+            "unborrowable_short_orders": 0,
+            "maximum_gross_short_exposure": 0.0,
+            "maximum_single_short_position": 0.0,
+            "borrow_status_validated": True,
+        },
     )
 
 

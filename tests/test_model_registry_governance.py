@@ -1,12 +1,23 @@
 import json
 
 import pytest
-
 from trading_app.model_registry import REGISTRY_SCHEMA_VERSION, ModelRegistry
 from trading_app.research import BacktestMetrics, RidgeReturnModel, synthetic_feature_rows
 
-
 FEATURE_NAMES = ("momentum", "news_score", "volatility", "spread_bps")
+
+
+def _diagnostics() -> dict[str, object]:
+    return {
+        "symbols": {f"SYM{index}": {"pnl_contribution": 0.02} for index in range(5)},
+        "sectors": {f"Sector {index}": {"pnl_contribution": 0.02} for index in range(5)},
+        "short_safety": {
+            "unborrowable_short_orders": 0,
+            "maximum_gross_short_exposure": 0.30,
+            "maximum_single_short_position": 0.03,
+            "borrow_status_validated": True,
+        },
+    }
 
 
 def _model(seed: int) -> RidgeReturnModel:
@@ -25,7 +36,8 @@ def _metrics(net_return: float = 0.12, sharpe: float = 1.1) -> BacktestMetrics:
         hit_rate=0.56,
         turnover=20,
         average_trade_return=0.006,
-        folds=6,
+        folds=8,
+        scored_observations=1000,
         excess_return_vs_benchmark=0.02,
         news_sharpe_delta=0.10,
     )
@@ -47,13 +59,21 @@ def test_registration_sets_challenger_and_records_history(tmp_path) -> None:
 
 def test_promotion_history_and_rollback_restore_previous_champion(tmp_path) -> None:
     registry = ModelRegistry(tmp_path)
-    first = registry.register(_model(17), _metrics())
+    first = registry.register(
+        _model(17),
+        _metrics(),
+        metadata={"dataset": "synthetic_fixture", "diagnostics": _diagnostics()},
+    )
     registry.promote(
         first.version,
         reason="first approved candidate",
         require_holdout_evaluation=False,
     )
-    second = registry.register(_model(19), _metrics(net_return=0.14, sharpe=1.3))
+    second = registry.register(
+        _model(19),
+        _metrics(net_return=0.14, sharpe=1.3),
+        metadata={"dataset": "synthetic_fixture", "diagnostics": _diagnostics()},
+    )
     registry.promote(
         second.version,
         reason="second approved candidate",
@@ -111,7 +131,11 @@ def test_operator_alias_cannot_reference_unknown_model(tmp_path) -> None:
 
 def test_promotion_rejects_positive_point_estimate_with_negative_lower_bound(tmp_path) -> None:
     registry = ModelRegistry(tmp_path)
-    record = registry.register(_model(29), _metrics())
+    record = registry.register(
+        _model(29),
+        _metrics(),
+        metadata={"diagnostics": _diagnostics()},
+    )
     registry.record_holdout_evaluation(
         record.version,
         dataset_path="sealed-holdout.jsonl",

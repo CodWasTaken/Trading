@@ -7,8 +7,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+from .promotion import PromotionGateConfig
 from .research import BacktestMetrics, RidgeReturnModel, metrics_dict
-
 
 REGISTRY_SCHEMA_VERSION = 3
 _ALIAS_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
@@ -221,50 +221,88 @@ class ModelRegistry:
         self,
         version: str,
         *,
-        minimum_folds: int = 3,
-        minimum_sharpe: float = 0.0,
-        maximum_drawdown: float = 0.20,
-        minimum_observations: int = 100,
+        gate_config: PromotionGateConfig | None = None,
+        minimum_folds: int | None = None,
+        minimum_sharpe: float | None = None,
+        maximum_drawdown: float | None = None,
+        minimum_observations: int | None = None,
+        minimum_net_return: float | None = None,
         minimum_excess_return: float | None = None,
         minimum_news_sharpe_delta: float | None = None,
         require_holdout_evaluation: bool = True,
-        minimum_holdout_net_return: float = 0.0,
-        minimum_holdout_sharpe: float = 0.0,
-        maximum_holdout_drawdown: float = 0.20,
-        minimum_holdout_observations: int = 100,
+        maximum_holdout_finalists: int | None = None,
+        minimum_holdout_net_return: float | None = None,
+        minimum_holdout_sharpe: float | None = None,
+        maximum_holdout_drawdown: float | None = None,
+        minimum_holdout_observations: int | None = None,
         minimum_holdout_excess_return: float | None = None,
         minimum_holdout_net_return_lower_bound: float | None = None,
         minimum_holdout_excess_return_lower_bound: float | None = None,
+        maximum_symbol_pnl_contribution: float | None = None,
+        maximum_sector_pnl_contribution: float | None = None,
+        maximum_unborrowable_short_orders: int | None = None,
+        maximum_gross_short_exposure: float | None = None,
+        maximum_single_short_position: float | None = None,
         reason: str = "promotion_gates_passed",
     ) -> ModelRecord:
         record = self.get(version)
         metrics = record.metrics
-        synthetic_holdout_waiver = (
-            require_holdout_evaluation
-            and record.metadata.get("dataset") == "synthetic_fixture"
+        configured = gate_config or PromotionGateConfig()
+        overrides = {
+            key: value
+            for key, value in {
+                "minimum_calibration_folds": minimum_folds,
+                "minimum_calibration_sharpe": minimum_sharpe,
+                "maximum_calibration_drawdown": maximum_drawdown,
+                "minimum_calibration_observations": minimum_observations,
+                "minimum_calibration_net_return": minimum_net_return,
+                "minimum_calibration_excess_return": minimum_excess_return,
+                "minimum_news_sharpe_delta": minimum_news_sharpe_delta,
+                "maximum_holdout_finalists": maximum_holdout_finalists,
+                "minimum_holdout_net_return": minimum_holdout_net_return,
+                "minimum_holdout_sharpe": minimum_holdout_sharpe,
+                "maximum_holdout_drawdown": maximum_holdout_drawdown,
+                "minimum_holdout_observations": minimum_holdout_observations,
+                "minimum_holdout_excess_return": minimum_holdout_excess_return,
+                "minimum_holdout_net_return_lower_bound": (minimum_holdout_net_return_lower_bound),
+                "minimum_holdout_excess_return_lower_bound": (
+                    minimum_holdout_excess_return_lower_bound
+                ),
+                "maximum_symbol_pnl_contribution": maximum_symbol_pnl_contribution,
+                "maximum_sector_pnl_contribution": maximum_sector_pnl_contribution,
+                "maximum_unborrowable_short_orders": (maximum_unborrowable_short_orders),
+                "maximum_gross_short_exposure": maximum_gross_short_exposure,
+                "maximum_single_short_position": maximum_single_short_position,
+            }.items()
+            if value is not None
+        }
+        gates = PromotionGateConfig.model_validate(
+            {**configured.model_dump(mode="json"), **overrides}
         )
-        effective_require_holdout = require_holdout_evaluation and not synthetic_holdout_waiver
+        synthetic_holdout_waiver = record.metadata.get("dataset") == "synthetic_fixture"
+        effective_require_holdout = not synthetic_holdout_waiver
         failures: list[str] = []
-        if float(metrics.get("net_return", 0)) <= 0:
+        if not require_holdout_evaluation and not synthetic_holdout_waiver:
+            failures.append("historical_holdout_requirement_cannot_be_disabled")
+        if _number(metrics, "net_return", float("-inf")) <= gates.minimum_calibration_net_return:
             failures.append("non_positive_net_return")
-        if float(metrics.get("sharpe", 0)) <= minimum_sharpe:
+        if _number(metrics, "sharpe", float("-inf")) <= gates.minimum_calibration_sharpe:
             failures.append("sharpe_below_gate")
-        if float(metrics.get("max_drawdown", 1)) >= maximum_drawdown:
+        if _number(metrics, "max_drawdown", float("inf")) >= gates.maximum_calibration_drawdown:
             failures.append("drawdown_above_gate")
-        if int(metrics.get("folds", 0)) < minimum_folds:
+        if _integer(metrics, "folds", 0) < gates.minimum_calibration_folds:
             failures.append("insufficient_walk_forward_folds")
-        if int(metrics.get("observations", 0)) < minimum_observations:
-            failures.append("insufficient_out_of_sample_observations")
+        if _integer(metrics, "scored_observations", 0) < gates.minimum_calibration_observations:
+            failures.append("insufficient_scored_calibration_observations")
         if (
-            minimum_excess_return is not None
-            and float(metrics.get("excess_return_vs_benchmark", 0))
-            <= minimum_excess_return
+            _number(metrics, "excess_return_vs_benchmark", float("-inf"))
+            <= gates.minimum_calibration_excess_return
         ):
             failures.append("benchmark_excess_return_below_gate")
         if (
-            minimum_news_sharpe_delta is not None
-            and float(metrics.get("news_sharpe_delta", 0))
-            <= minimum_news_sharpe_delta
+            gates.minimum_news_sharpe_delta is not None
+            and _number(metrics, "news_sharpe_delta", float("-inf"))
+            <= gates.minimum_news_sharpe_delta
         ):
             failures.append("news_ablation_delta_below_gate")
 
@@ -276,58 +314,83 @@ class ModelRegistry:
             if not isinstance(holdout_metrics, dict):
                 failures.append("untouched_holdout_metrics_invalid")
             else:
-                if float(holdout_metrics.get("net_return", 0)) <= minimum_holdout_net_return:
+                if (
+                    _number(holdout_metrics, "net_return", float("-inf"))
+                    <= gates.minimum_holdout_net_return
+                ):
                     failures.append("holdout_net_return_below_gate")
-                if float(holdout_metrics.get("sharpe", 0)) <= minimum_holdout_sharpe:
+                if (
+                    gates.minimum_holdout_sharpe is not None
+                    and _number(holdout_metrics, "sharpe", float("-inf"))
+                    <= gates.minimum_holdout_sharpe
+                ):
                     failures.append("holdout_sharpe_below_gate")
-                if float(holdout_metrics.get("max_drawdown", 1)) >= maximum_holdout_drawdown:
+                if (
+                    _number(holdout_metrics, "max_drawdown", float("inf"))
+                    >= gates.maximum_holdout_drawdown
+                ):
                     failures.append("holdout_drawdown_above_gate")
-                if int(holdout_metrics.get("observations", 0)) < minimum_holdout_observations:
+                if (
+                    _integer(holdout_metrics, "observations", 0)
+                    < gates.minimum_holdout_observations
+                ):
                     failures.append("holdout_observations_below_gate")
                 if (
-                    minimum_holdout_excess_return is not None
-                    and float(holdout_metrics.get("excess_return_vs_benchmark", 0))
-                    <= minimum_holdout_excess_return
+                    _number(
+                        holdout_metrics,
+                        "excess_return_vs_benchmark",
+                        float("-inf"),
+                    )
+                    <= gates.minimum_holdout_excess_return
                 ):
                     failures.append("holdout_excess_return_below_gate")
                 if (
-                    minimum_holdout_net_return_lower_bound is not None
-                    and float(holdout_metrics.get("net_return_lower_bound", float("-inf")))
-                    <= minimum_holdout_net_return_lower_bound
+                    _number(
+                        holdout_metrics,
+                        "net_return_lower_bound",
+                        float("-inf"),
+                    )
+                    <= gates.minimum_holdout_net_return_lower_bound
                 ):
                     failures.append("holdout_net_return_lower_bound_below_gate")
                 if (
-                    minimum_holdout_excess_return_lower_bound is not None
-                    and float(
-                        holdout_metrics.get("excess_return_lower_bound", float("-inf"))
+                    _number(
+                        holdout_metrics,
+                        "excess_return_lower_bound",
+                        float("-inf"),
                     )
-                    <= minimum_holdout_excess_return_lower_bound
+                    <= gates.minimum_holdout_excess_return_lower_bound
                 ):
                     failures.append("holdout_excess_return_lower_bound_below_gate")
+            finalist_count = _holdout_finalist_count(holdout_evaluation)
+            if finalist_count is None:
+                failures.append("holdout_candidate_family_size_missing")
+            elif finalist_count > gates.maximum_holdout_finalists:
+                failures.append("holdout_candidate_family_size_above_gate")
+
+        if not synthetic_holdout_waiver:
+            _append_governance_failures(
+                failures,
+                record.metadata.get("diagnostics"),
+                gates,
+                prefix="calibration",
+            )
+            if effective_require_holdout and holdout_evaluation is not None:
+                _append_governance_failures(
+                    failures,
+                    holdout_evaluation.get("diagnostics"),
+                    gates,
+                    prefix="holdout",
+                )
         if failures:
             raise ValueError("Model failed promotion gates: " + ", ".join(failures))
 
-        gates: dict[str, object] = {
-            "minimum_folds": minimum_folds,
-            "minimum_sharpe": minimum_sharpe,
-            "maximum_drawdown": maximum_drawdown,
-            "minimum_observations": minimum_observations,
-            "minimum_excess_return": minimum_excess_return,
-            "minimum_news_sharpe_delta": minimum_news_sharpe_delta,
+        gate_snapshot: dict[str, object] = {
+            **gates.model_dump(mode="json"),
+            "manifest_sha256": gates.manifest_sha256,
             "require_holdout_evaluation": require_holdout_evaluation,
             "effective_require_holdout_evaluation": effective_require_holdout,
             "synthetic_holdout_waiver": synthetic_holdout_waiver,
-            "minimum_holdout_net_return": minimum_holdout_net_return,
-            "minimum_holdout_sharpe": minimum_holdout_sharpe,
-            "maximum_holdout_drawdown": maximum_holdout_drawdown,
-            "minimum_holdout_observations": minimum_holdout_observations,
-            "minimum_holdout_excess_return": minimum_holdout_excess_return,
-            "minimum_holdout_net_return_lower_bound": (
-                minimum_holdout_net_return_lower_bound
-            ),
-            "minimum_holdout_excess_return_lower_bound": (
-                minimum_holdout_excess_return_lower_bound
-            ),
         }
         return self.set_alias(
             "champion",
@@ -335,7 +398,7 @@ class ModelRegistry:
             reason=reason,
             action="promote",
             details={
-                "promotion_gates": gates,
+                "promotion_gates": gate_snapshot,
                 "registered_metrics": metrics,
                 "holdout_evaluation": holdout_evaluation,
             },
@@ -408,8 +471,7 @@ class ModelRegistry:
         events = [
             dict(event)
             for event in self._read()["alias_history"]
-            if isinstance(event, dict)
-            and (alias_name is None or event.get("alias") == alias_name)
+            if isinstance(event, dict) and (alias_name is None or event.get("alias") == alias_name)
         ]
         if limit is not None:
             events = events[-limit:]
@@ -460,3 +522,94 @@ class ModelRegistry:
                 "lowercase letters, digits, underscores, or hyphens"
             )
         return value
+
+
+def _number(payload: dict[str, object], key: str, default: float) -> float:
+    value = payload.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    return float(value)
+
+
+def _integer(payload: dict[str, object], key: str, default: int) -> int:
+    value = payload.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return default
+    return value
+
+
+def _holdout_finalist_count(evaluation: dict[str, object]) -> int | None:
+    frozen = evaluation.get("frozen_configuration")
+    if not isinstance(frozen, dict):
+        return None
+    plan = frozen.get("statistical_plan")
+    if not isinstance(plan, dict):
+        return None
+    count = plan.get("candidate_family_size")
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        return None
+    return count
+
+
+def _append_governance_failures(
+    failures: list[str],
+    raw_diagnostics: object,
+    gates: PromotionGateConfig,
+    *,
+    prefix: str,
+) -> None:
+    if not isinstance(raw_diagnostics, dict):
+        failures.append(f"{prefix}_governance_diagnostics_missing")
+        return
+    symbol_concentration = _pnl_concentration(raw_diagnostics.get("symbols"))
+    if symbol_concentration is None:
+        failures.append(f"{prefix}_symbol_attribution_missing")
+    elif symbol_concentration > gates.maximum_symbol_pnl_contribution:
+        failures.append(f"{prefix}_symbol_concentration_above_gate")
+    sector_concentration = _pnl_concentration(raw_diagnostics.get("sectors"))
+    if sector_concentration is None:
+        failures.append(f"{prefix}_sector_attribution_missing")
+    elif sector_concentration > gates.maximum_sector_pnl_contribution:
+        failures.append(f"{prefix}_sector_concentration_above_gate")
+
+    short_safety = raw_diagnostics.get("short_safety")
+    if not isinstance(short_safety, dict):
+        failures.append(f"{prefix}_short_safety_evidence_missing")
+        return
+    if short_safety.get("borrow_status_validated") is not True:
+        failures.append(f"{prefix}_borrow_status_not_validated")
+    if (
+        _integer(short_safety, "unborrowable_short_orders", 2**31)
+        > gates.maximum_unborrowable_short_orders
+    ):
+        failures.append(f"{prefix}_unborrowable_short_orders_above_gate")
+    if (
+        _number(short_safety, "maximum_gross_short_exposure", float("inf"))
+        > gates.maximum_gross_short_exposure
+    ):
+        failures.append(f"{prefix}_gross_short_exposure_above_gate")
+    if (
+        _number(short_safety, "maximum_single_short_position", float("inf"))
+        > gates.maximum_single_short_position
+    ):
+        failures.append(f"{prefix}_single_short_position_above_gate")
+
+
+def _pnl_concentration(raw_attribution: object) -> float | None:
+    if not isinstance(raw_attribution, dict) or not raw_attribution:
+        return None
+    contributions: list[float] = []
+    for value in raw_attribution.values():
+        if not isinstance(value, dict):
+            return None
+        contribution = value.get("pnl_contribution")
+        if isinstance(contribution, bool) or not isinstance(
+            contribution,
+            (int, float),
+        ):
+            return None
+        contributions.append(float(contribution))
+    total = sum(contributions)
+    if total <= 0:
+        return None
+    return max(max(contribution, 0.0) for contribution in contributions) / total

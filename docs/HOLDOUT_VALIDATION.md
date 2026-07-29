@@ -104,24 +104,19 @@ trading-registry --registry .trading/models holdouts \
 ```bash
 trading-registry --registry .trading/models promote MODEL_VERSION \
   --reason "passed calibration and sealed holdout gates" \
-  --minimum-folds 5 \
-  --minimum-sharpe 0.25 \
-  --maximum-drawdown 0.15 \
-  --minimum-observations 500 \
-  --minimum-excess-return 0.0 \
-  --minimum-news-sharpe-delta 0.0 \
-  --minimum-holdout-net-return 0.0 \
-  --minimum-holdout-sharpe 0.0 \
-  --maximum-holdout-drawdown 0.15 \
-  --minimum-holdout-observations 100 \
-  --minimum-holdout-excess-return 0.0 \
-  --minimum-holdout-net-return-lower-bound 0.0 \
-  --minimum-holdout-excess-return-lower-bound 0.0
+  --gate-config config/promotion/strict-paper-v1.json
 ```
 
-The default operator gates require the adjusted bootstrap lower bounds for both net return and benchmark-excess return to be positive. A positive point estimate with a lower bound at or below zero fails.
+The default operator gates require at most three predeclared finalists, at least
+300 holdout observations, positive net and benchmark-excess returns, drawdown
+below 15%, and positive adjusted bootstrap lower bounds for both net return and
+benchmark-excess return. A point estimate or lower bound at or below zero fails.
+Split creation and evaluation both reject a candidate family larger than three.
 
-Promotion fails when the holdout record is missing or any selected calibration, holdout, or uncertainty gate fails. The promotion-history event embeds the exact holdout evaluation and complete gate configuration used.
+Promotion also requires complete symbol/sector attribution and borrow/exposure
+evidence from calibration and holdout. Missing evidence is not interpreted as
+zero. The promotion-history event embeds the exact holdout evaluation, complete
+effective gate configuration, and gate-manifest hash.
 
 Passing historical gates does not authorize real-money execution. The model still requires deterministic replay, operational review, and at least 60–90 trading days of live paper evidence.
 

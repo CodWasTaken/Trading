@@ -73,6 +73,28 @@ The generator has no holdout input and rejects any dataset marked sealed or
 `untouched_holdout`. Candidate rankings are calibration evidence, not promotion
 evidence or a profitability claim.
 
+## Fail-closed promotion gates
+
+Implemented in version 0.21.0:
+
+- a versioned, hashed strict promotion-gate manifest
+- calibration minimums of eight purged folds, 1,000 scored observations,
+  positive cost-adjusted net and benchmark-excess return, Sharpe above 0.50,
+  and drawdown below 15%
+- a maximum of three sealed-holdout finalists, 300 holdout observations,
+  positive point estimates and adjusted lower bounds for net and excess return,
+  and drawdown below 15%
+- 20% symbol and 35% sector PnL-contribution caps
+- zero unborrowable shorts, 30% maximum gross short exposure, and 3% maximum
+  single-short exposure
+- fail-closed missing attribution, borrow, exposure, statistical-plan, and
+  uncertainty evidence
+- exact effective thresholds and manifest hashes in registry history
+- a non-disableable untouched-holdout requirement for historical models
+
+Passing these gates changes only the historical champion alias. It does not
+authorize live-money execution or establish profitability.
+
 ## Milestone 1 — durable data and replay
 
 Implemented foundation:
