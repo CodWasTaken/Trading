@@ -173,7 +173,8 @@ export TRADING_ENV="runtime-smoke"
 export TRADING_DEMO_MODE="true"
 export TRADING_EXECUTION_MODE="internal-paper"
 export TRADING_STRATEGY_MODE="explainable"
-export TRADING_SYMBOLS="AAPL,MSFT,NVDA"
+export TRADING_SYMBOLS="AAPL,MSFT,NVDA,AVGO,ORCL,CRM,CSCO,ADBE,AMD,V,MA,GOOGL,META,NFLX,DIS,TMUS,AMZN,TSLA,HD,MCD,NKE,LOW,WMT,COST,PG,KO,PEP,UNH,LLY,JNJ,MRK,ABBV,TMO,ABT,JPM,BAC,WFC,GS,MS,CAT,GE,RTX,HON,UPS,XOM,CVX,COP,NEE"
+export TRADING_UNIVERSE_MANIFEST_PATH="$ROOT_DIR/config/universes/us-liquid-large-cap-v1.json"
 export TRADING_DECISION_INTERVAL_SECONDS="0.05"
 export TRADING_MAX_DATA_AGE_SECONDS="5"
 export TRADING_CONTROL_API_KEY="runtime-smoke-control-key"
@@ -251,7 +252,10 @@ assert health["kill_switch"] is False
 
 summary = read_json("/v1/dashboard/summary")
 assert summary["application_version"] == __version__
-assert summary["symbols"] == ["AAPL", "MSFT", "NVDA"]
+assert summary["symbols"] == os.environ["TRADING_SYMBOLS"].split(",")
+assert summary["universe"]["universe_id"] == "us-liquid-large-cap-v1"
+assert len(summary["universe"]["symbols"]) == 48
+assert summary["universe"]["manifest_sha256"]
 assert summary["portfolio"]["equity"] > 0
 
 reconciliation = read_json("/v1/reconciliation")

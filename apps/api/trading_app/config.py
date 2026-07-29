@@ -20,7 +20,17 @@ class Settings(BaseSettings):
     trading_execution_mode: Literal["internal-paper", "alpaca-paper"] = "internal-paper"
     trading_starting_cash: float = 100_000.0
     trading_symbols: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["AAPL", "MSFT", "NVDA", "AMZN", "META"]
+        default_factory=lambda: [
+            "AAPL", "MSFT", "NVDA", "AVGO", "ORCL", "CRM", "CSCO", "ADBE",
+            "AMD", "V", "MA", "GOOGL", "META", "NFLX", "DIS", "TMUS", "AMZN",
+            "TSLA", "HD", "MCD", "NKE", "LOW", "WMT", "COST", "PG", "KO", "PEP",
+            "UNH", "LLY", "JNJ", "MRK", "ABBV", "TMO", "ABT", "JPM", "BAC",
+            "WFC", "GS", "MS", "CAT", "GE", "RTX", "HON", "UPS", "XOM", "CVX",
+            "COP", "NEE",
+        ]
+    )
+    trading_universe_manifest_path: str = (
+        "config/universes/us-liquid-large-cap-v1.json"
     )
     trading_decision_interval_seconds: float = 3.0
     trading_max_position_pct: float = 0.05

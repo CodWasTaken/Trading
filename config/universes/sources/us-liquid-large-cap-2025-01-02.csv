@@ -1,0 +1,49 @@
+symbol,sector,exchange,security_type
+AAPL,Information Technology,NASDAQ,common_stock
+MSFT,Information Technology,NASDAQ,common_stock
+NVDA,Information Technology,NASDAQ,common_stock
+AVGO,Information Technology,NASDAQ,common_stock
+ORCL,Information Technology,NYSE,common_stock
+CRM,Information Technology,NYSE,common_stock
+CSCO,Information Technology,NASDAQ,common_stock
+ADBE,Information Technology,NASDAQ,common_stock
+AMD,Information Technology,NASDAQ,common_stock
+V,Information Technology,NYSE,common_stock
+MA,Information Technology,NYSE,common_stock
+GOOGL,Communication Services,NASDAQ,common_stock
+META,Communication Services,NASDAQ,common_stock
+NFLX,Communication Services,NASDAQ,common_stock
+DIS,Communication Services,NYSE,common_stock
+TMUS,Communication Services,NASDAQ,common_stock
+AMZN,Consumer Discretionary,NASDAQ,common_stock
+TSLA,Consumer Discretionary,NASDAQ,common_stock
+HD,Consumer Discretionary,NYSE,common_stock
+MCD,Consumer Discretionary,NYSE,common_stock
+NKE,Consumer Discretionary,NYSE,common_stock
+LOW,Consumer Discretionary,NYSE,common_stock
+WMT,Consumer Staples,NASDAQ,common_stock
+COST,Consumer Staples,NASDAQ,common_stock
+PG,Consumer Staples,NYSE,common_stock
+KO,Consumer Staples,NYSE,common_stock
+PEP,Consumer Staples,NASDAQ,common_stock
+UNH,Health Care,NYSE,common_stock
+LLY,Health Care,NYSE,common_stock
+JNJ,Health Care,NYSE,common_stock
+MRK,Health Care,NYSE,common_stock
+ABBV,Health Care,NYSE,common_stock
+TMO,Health Care,NYSE,common_stock
+ABT,Health Care,NYSE,common_stock
+JPM,Financials,NYSE,common_stock
+BAC,Financials,NYSE,common_stock
+WFC,Financials,NYSE,common_stock
+GS,Financials,NYSE,common_stock
+MS,Financials,NYSE,common_stock
+CAT,Industrials,NYSE,common_stock
+GE,Industrials,NYSE,common_stock
+RTX,Industrials,NYSE,common_stock
+HON,Industrials,NASDAQ,common_stock
+UPS,Industrials,NYSE,common_stock
+XOM,Energy,NYSE,common_stock
+CVX,Energy,NYSE,common_stock
+COP,Energy,NYSE,common_stock
+NEE,Utilities,NYSE,common_stock

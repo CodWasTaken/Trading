@@ -30,6 +30,10 @@ def build_parser() -> argparse.ArgumentParser:
     split.add_argument("--split-time", required=True, help="ISO-8601 feature-time boundary")
     split.add_argument("--manifest")
     split.add_argument(
+        "--universe-manifest",
+        default="config/universes/us-liquid-large-cap-v1.json",
+    )
+    split.add_argument(
         "--candidate-family-size",
         type=int,
         default=1,
@@ -51,6 +55,10 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--registry", default=".trading/models")
     evaluate.add_argument("--version", help="Defaults to the challenger alias")
     evaluate.add_argument("--output", required=True)
+    evaluate.add_argument(
+        "--universe-manifest",
+        default="config/universes/us-liquid-large-cap-v1.json",
+    )
     return parser
 
 
@@ -67,6 +75,7 @@ def main() -> None:
             bootstrap_samples=arguments.bootstrap_samples,
             confidence_level=arguments.confidence_level,
             bootstrap_block_size=arguments.bootstrap_block_size,
+            universe_manifest_path=arguments.universe_manifest,
         )
     else:
         result = evaluate_untouched_holdout(
@@ -74,6 +83,7 @@ def main() -> None:
             arguments.registry,
             arguments.output,
             version=arguments.version,
+            universe_manifest_path=arguments.universe_manifest,
         )
     print(json.dumps(result, indent=2, sort_keys=True))
 

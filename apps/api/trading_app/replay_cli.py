@@ -16,7 +16,12 @@ from .model_registry import ModelRegistry
 from .model_strategy import ChampionModelStrategy
 from .replay import ReplayResult, run_historical_replay
 from .strategy import ExplainableCatalystStrategy, Strategy
-
+from .universe import (
+    assert_universe_binding,
+    assert_universe_symbols,
+    assert_universe_time_range,
+    load_universe_manifest,
+)
 
 ModelType = TypeVar("ModelType", bound=BaseModel)
 
@@ -36,10 +41,27 @@ async def replay_history(
     slippage_bps: float,
     starting_cash: float | None,
     signal_threshold: float | None = None,
+    universe_manifest_path: str | None = None,
 ) -> dict[str, object]:
     bars_source = Path(bars_path)
     news_source = Path(news_path)
     bars, news = load_replay_inputs(bars_source, news_source)
+    universe = (
+        None
+        if universe_manifest_path is None
+        else load_universe_manifest(universe_manifest_path)
+    )
+    if universe is not None:
+        assert_universe_symbols(
+            {bar.symbol for bar in bars},
+            universe,
+            context="replay bars",
+        )
+        assert_universe_time_range(
+            [bar.timestamp for bar in bars],
+            universe,
+            context="replay bars",
+        )
     settings = replay_settings(starting_cash)
     strategy_factory, strategy_name, resolved_threshold = build_strategy_factory(
         strategy_mode,
@@ -47,7 +69,18 @@ async def replay_history(
         allow_synthetic_champion=allow_synthetic_champion,
         signal_threshold=signal_threshold,
     )
+    if universe is not None and strategy_mode == "champion":
+        champion = ModelRegistry(registry_path).champion()
+        if champion is None:
+            raise ValueError("Champion replay requested but registry has no champion")
+        assert_universe_binding(
+            {"universe": champion.metadata.get("universe")},
+            universe,
+            context="replay champion",
+        )
     sources = replay_source_metadata(bars_source, news_source, bars, news)
+    if universe is not None:
+        sources["universe"] = universe.binding(universe_manifest_path)
 
     async def execute() -> ReplayResult:
         return await run_historical_replay(

@@ -39,6 +39,7 @@ flowchart LR
 - `borrow.py`: fail-closed borrow status and forced-cover/recall abstractions
 - `cost_model.py`: versioned execution, financing, funding/FX, and tax assumptions
 - `tax.py`: separate estimated Polish tax reporting; never a per-fill deduction
+- `universe.py`: frozen-universe hash, source, date, symbol, and binding checks
 - `store.py`: event ledger and WebSocket fan-out
 - `engine.py`: orchestration only; no hidden trading policy
 - `main.py`: HTTP/WebSocket interface and lifecycle
