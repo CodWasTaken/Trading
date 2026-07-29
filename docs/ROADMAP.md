@@ -20,6 +20,22 @@ Implemented in version 0.17.0:
 This is accounting and safety infrastructure, not evidence that a short strategy
 is profitable. All execution remains internal paper or Alpaca paper.
 
+## Explicit cost model
+
+Implemented in version 0.18.0:
+
+- versioned cost manifests with stable hashes in experiment and registry metadata
+- observed spread, slippage, commission, regulatory sell fee, and impact stress
+- borrow, margin-interest, and dividend-replacement financing attribution
+- explicit optional PLN→USD funding conversion, never an automatic trade fee
+- pre-tax performance after execution/financing costs
+- separate estimated Polish tax and after-tax summaries labelled as non-advice
+- identical frozen cost manifests in calibration, holdout, monitoring, and replay
+
+The bundled conservative manifest is an initial paper assumption. It must be
+reviewed against observed paper fills and current broker schedules; it is not a
+claim about future achievable costs.
+
 ## Milestone 1 — durable data and replay
 
 Implemented foundation:

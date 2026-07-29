@@ -37,6 +37,8 @@ flowchart LR
 - `portfolio.py`: signed quantities, direction-aware average entry and P&L,
   cash, margin, exposure, financing, and drawdown
 - `borrow.py`: fail-closed borrow status and forced-cover/recall abstractions
+- `cost_model.py`: versioned execution, financing, funding/FX, and tax assumptions
+- `tax.py`: separate estimated Polish tax reporting; never a per-fill deduction
 - `store.py`: event ledger and WebSocket fan-out
 - `engine.py`: orchestration only; no hidden trading policy
 - `main.py`: HTTP/WebSocket interface and lifecycle
@@ -90,3 +92,17 @@ a short. Missing, hard-to-borrow, unavailable, recalled, or insufficient status
 rejects the whole proposal. The configured ETB list is deterministic paper input;
 it is not a claim about live availability. Recall handling produces an explicit
 forced-cover instruction which remains inside the paper broker path.
+
+## Cost and tax boundary
+
+The paper fill ledger separates observed spread and slippage embedded in the
+fill price from commissions, regulatory sell fees, and market-impact stress
+booked as explicit cash costs. Borrow, margin interest, and dividend replacement
+accrue as financing costs. Each experiment freezes the complete versioned cost
+manifest and its SHA-256 in registry and holdout metadata.
+
+PLN→USD conversion belongs to funding. It is charged only when an operator
+records a conversion cash flow, never automatically on trade turnover. Strategy
+performance remains pre-tax after execution and financing costs. Polish tax is
+a separate estimated report with a separate after-tax summary; it does not alter
+fills or the pre-tax equity curve and is not tax advice.

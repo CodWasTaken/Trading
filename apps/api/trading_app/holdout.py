@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .cost_model import CostModelConfig, legacy_cost_model
 from .dataset import dataset_metadata_path, load_feature_dataset, write_feature_dataset
 from .model_registry import ModelRegistry
 from .research import _ScoredRow, _simulate, metrics_dict
@@ -258,6 +259,18 @@ def evaluate_untouched_holdout(
             "Registered model validation configuration is incomplete; "
             "threshold and cost assumptions must be frozen before holdout scoring"
         ) from error
+    raw_cost_model = validation.get("cost_model")
+    cost_model = (
+        legacy_cost_model(transaction_cost_bps)
+        if raw_cost_model is None
+        else CostModelConfig.model_validate(raw_cost_model)
+    )
+    registered_cost_hash = validation.get("cost_model_sha256")
+    if (
+        registered_cost_hash is not None
+        and str(registered_cost_hash) != cost_model.manifest_sha256
+    ):
+        raise ValueError("Registered cost model hash does not match its frozen manifest")
 
     dataset_sha256 = _sha256(source)
     metadata_source = dataset_metadata_path(source)
@@ -272,6 +285,7 @@ def evaluate_untouched_holdout(
         periods_per_year=periods_per_year,
         folds=1,
         purged_rows=0,
+        cost_model=cost_model,
     )
     benchmark = _simulate(
         scored,
@@ -281,6 +295,7 @@ def evaluate_untouched_holdout(
         folds=1,
         purged_rows=0,
         always_long=True,
+        cost_model=cost_model,
     )
     metrics = replace(
         candidate.metrics,
@@ -293,12 +308,16 @@ def evaluate_untouched_holdout(
         scored,
         threshold=threshold,
         transaction_cost_bps=transaction_cost_bps,
+        cost_model=cost_model,
+        periods_per_year=periods_per_year,
     )
     benchmark_period_returns = simulation_period_returns(
         scored,
         threshold=threshold,
         transaction_cost_bps=transaction_cost_bps,
         always_long=True,
+        cost_model=cost_model,
+        periods_per_year=periods_per_year,
     )
     uncertainty = block_bootstrap_evidence(
         candidate_period_returns,
@@ -345,6 +364,8 @@ def evaluate_untouched_holdout(
             "feature_names": list(feature_names),
             "prediction_threshold": threshold,
             "transaction_cost_bps": transaction_cost_bps,
+            "cost_model": cost_model.model_dump(mode="json"),
+            "cost_model_sha256": cost_model.manifest_sha256,
             "effective_periods_per_year": periods_per_year,
             "statistical_plan": statistical_plan,
         },
@@ -363,6 +384,7 @@ def evaluate_untouched_holdout(
             "feature_schema_matched": True,
             "threshold_frozen_from_registration": True,
             "transaction_costs_frozen_from_registration": True,
+            "cost_model_manifest_hash_verified": True,
             "statistical_plan_frozen_at_split": True,
             "multiple_comparison_budget_predeclared": True,
             "single_evaluation_per_model_and_holdout_hash": True,

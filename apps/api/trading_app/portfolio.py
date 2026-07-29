@@ -55,12 +55,17 @@ class Portfolio:
         maintenance_margin_requirement: float = 0.30,
         borrow_rate_annual: float = 0.0,
         dividend_replacement_rate_annual: float = 0.0,
+        margin_interest_rate_annual: float = 0.0,
     ) -> None:
         if starting_cash <= 0:
             raise ValueError("starting_cash must be positive")
         if not 0 < maintenance_margin_requirement <= initial_margin_requirement <= 1:
             raise ValueError("margin requirements must satisfy 0 < maintenance <= initial <= 1")
-        if borrow_rate_annual < 0 or dividend_replacement_rate_annual < 0:
+        if (
+            borrow_rate_annual < 0
+            or dividend_replacement_rate_annual < 0
+            or margin_interest_rate_annual < 0
+        ):
             raise ValueError("short financing rates cannot be negative")
         self.starting_cash = starting_cash
         self.cash = starting_cash
@@ -68,6 +73,7 @@ class Portfolio:
         self.maintenance_margin_requirement = maintenance_margin_requirement
         self.borrow_rate_annual = borrow_rate_annual
         self.dividend_replacement_rate_annual = dividend_replacement_rate_annual
+        self.margin_interest_rate_annual = margin_interest_rate_annual
         self._quantity: dict[str, float] = defaultdict(float)
         self._average_price: dict[str, float] = defaultdict(float)
         self._last_price: dict[str, float] = {}
@@ -76,6 +82,10 @@ class Portfolio:
         self._short_realized_pnl = 0.0
         self.borrow_costs = 0.0
         self.dividend_replacement_costs = 0.0
+        self.margin_interest_costs = 0.0
+        self.execution_costs = 0.0
+        self.cash_execution_fees = 0.0
+        self.funding_fx_costs = 0.0
         self.transitions: list[PositionTransition] = []
         self.trades_today = 0
         self.day_start_equity = starting_cash
@@ -108,10 +118,16 @@ class Portfolio:
         replacement = (
             gross_short * self.dividend_replacement_rate_annual * year_fraction
         )
-        total = borrow + replacement
+        margin_interest = (
+            max(0.0, -self.cash)
+            * self.margin_interest_rate_annual
+            * year_fraction
+        )
+        total = borrow + replacement + margin_interest
         self.cash -= total
         self.borrow_costs += borrow
         self.dividend_replacement_costs += replacement
+        self.margin_interest_costs += margin_interest
         self._last_financing_time = timestamp
         return total
 
@@ -125,6 +141,18 @@ class Portfolio:
         self.cash -= replacement
         self.dividend_replacement_costs += replacement
         return replacement
+
+    def apply_funding_conversion(
+        self,
+        amount_usd: float,
+        conversion_cost_bps: float,
+    ) -> float:
+        if amount_usd < 0 or conversion_cost_bps < 0:
+            raise ValueError("funding conversion inputs cannot be negative")
+        cost = amount_usd * conversion_cost_bps / 10_000
+        self.cash -= cost
+        self.funding_fx_costs += cost
+        return cost
 
     def rollover_session(self, as_of: datetime) -> bool:
         """Reset daily controls once when market-data dates advance."""
@@ -180,6 +208,9 @@ class Portfolio:
             self._quantity[symbol] = new_quantity
 
         self.cash -= delta * fill.price
+        self.cash -= fill.cash_fees
+        self.execution_costs += fill.total_execution_cost
+        self.cash_execution_fees += fill.cash_fees
         self._last_price[symbol] = fill.price
         self.trades_today += 1
         transition = PositionTransition(
@@ -258,6 +289,10 @@ class Portfolio:
             short_unrealized_pnl=short_unrealized,
             borrow_costs=self.borrow_costs,
             dividend_replacement_costs=self.dividend_replacement_costs,
+            margin_interest_costs=self.margin_interest_costs,
+            execution_costs=self.execution_costs,
+            cash_execution_fees=self.cash_execution_fees,
+            funding_fx_costs=self.funding_fx_costs,
             daily_pnl=daily_pnl,
             drawdown=drawdown,
             positions=positions,

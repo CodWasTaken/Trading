@@ -13,6 +13,8 @@ from . import __version__
 from .auth import require_control_api_key
 from .broker import AlpacaPaperBroker, InternalPaperBroker
 from .config import Settings, get_settings
+from .cost_model import cost_model_from_settings
+from .domain import PortfolioSnapshot
 from .engine import TradingEngine
 from .model_registry import ModelRegistry
 from .model_strategy import ChampionModelStrategy
@@ -23,6 +25,7 @@ from .risk import RiskEngine
 from .sec import SecEdgarClient
 from .store import EventStore
 from .strategy import ExplainableCatalystStrategy
+from .tax import estimate_polish_tax
 
 
 class ControlRequest(BaseModel):
@@ -32,6 +35,7 @@ class ControlRequest(BaseModel):
 class AppState:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self.cost_model = cost_model_from_settings(settings)
         self.event_sink = SQLiteEventSink(settings.trading_database_path)
         self.store = EventStore(sink=self.event_sink)
         self.portfolio = Portfolio(
@@ -42,12 +46,15 @@ class AppState:
             dividend_replacement_rate_annual=(
                 settings.trading_dividend_replacement_rate_annual
             ),
+            margin_interest_rate_annual=(
+                settings.trading_margin_interest_rate_annual
+            ),
         )
         self.risk = RiskEngine(settings)
         self.broker = (
             AlpacaPaperBroker(settings)
             if settings.trading_execution_mode == "alpaca-paper"
-            else InternalPaperBroker()
+            else InternalPaperBroker(cost_config=self.cost_model.execution)
         )
         registry = ModelRegistry(settings.trading_model_registry_path)
         champion = (
@@ -145,6 +152,7 @@ async def health(current: StateDependency) -> dict[str, object]:
 @app.get("/v1/dashboard/summary")
 async def dashboard_summary(current: StateDependency) -> dict[str, object]:
     portfolio = current.portfolio.snapshot()
+    tax_estimate = _tax_estimate(current, portfolio)
     ledger = await current.store.snapshot()
     feed_health = await current.store.health(
         current.settings.trading_max_data_age_seconds
@@ -166,8 +174,14 @@ async def dashboard_summary(current: StateDependency) -> dict[str, object]:
                 "dividend_replacement_costs": (
                     portfolio.dividend_replacement_costs
                 ),
+                "margin_interest_costs": portfolio.margin_interest_costs,
             },
         },
+        "cost_model": {
+            "manifest": current.cost_model.model_dump(mode="json"),
+            "manifest_sha256": current.cost_model.manifest_sha256,
+        },
+        "estimated_polish_tax": tax_estimate,
         "kill_switch": current.risk.kill_switch,
         "engine_running": current.engine.running,
         "symbols": current.settings.trading_symbols,
@@ -181,6 +195,35 @@ async def dashboard_summary(current: StateDependency) -> dict[str, object]:
 @app.get("/v1/portfolio")
 async def portfolio(current: StateDependency) -> dict[str, object]:
     return current.portfolio.snapshot().model_dump(mode="json")
+
+
+@app.get("/v1/reports/polish-tax-estimate")
+async def polish_tax_estimate(current: StateDependency) -> dict[str, object]:
+    portfolio = current.portfolio.snapshot()
+    return _tax_estimate(current, portfolio)
+
+
+def _tax_estimate(
+    current: AppState,
+    portfolio: PortfolioSnapshot,
+) -> dict[str, object]:
+    explicit_execution_and_financing = (
+        portfolio.cash_execution_fees
+        + portfolio.borrow_costs
+        + portfolio.dividend_replacement_costs
+        + portfolio.margin_interest_costs
+    )
+    report = estimate_polish_tax(
+        starting_equity=current.portfolio.starting_cash,
+        current_equity=portfolio.equity,
+        realized_pnl_before_explicit_costs=portfolio.realized_pnl,
+        explicit_execution_and_financing_costs=(
+            explicit_execution_and_financing
+        ),
+        funding_fx_cost=current.cost_model.funding.estimated_conversion_cost_usd,
+        config=current.cost_model.polish_tax,
+    )
+    return report.model_dump(mode="json")
 
 
 @app.get("/v1/events")

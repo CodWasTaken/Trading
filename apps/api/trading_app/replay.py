@@ -11,6 +11,7 @@ from typing import Any
 
 from .broker import InternalPaperBroker
 from .config import Settings
+from .cost_model import cost_model_from_settings
 from .domain import DecisionStatus, LiveEvent, NewsEvent, Quote, Side
 from .engine import TradingEngine
 from .historical import HistoricalBar
@@ -18,6 +19,7 @@ from .portfolio import Portfolio
 from .risk import RiskEngine
 from .store import EventStore
 from .strategy import Strategy
+from .tax import estimate_polish_tax
 
 
 @dataclass
@@ -114,6 +116,12 @@ async def run_historical_replay(
         dividend_replacement_rate_annual=(
             settings.trading_dividend_replacement_rate_annual
         ),
+        margin_interest_rate_annual=settings.trading_margin_interest_rate_annual,
+    )
+    replay_cost_model = cost_model_from_settings(
+        settings,
+        observed_spread_bps=spread_bps,
+        slippage_bps=slippage_bps,
     )
     risk = RiskEngine(settings, clock=clock)
     engine = TradingEngine(
@@ -121,7 +129,10 @@ async def run_historical_replay(
         portfolio,
         risk,
         strategy_factory(),
-        InternalPaperBroker(slippage_bps=slippage_bps),
+        InternalPaperBroker(
+            slippage_bps=slippage_bps,
+            cost_config=replay_cost_model.execution,
+        ),
     )
 
     news_cursor = 0
@@ -244,6 +255,19 @@ async def run_historical_replay(
         if symbol in store.quotes
     }
     starting_cash = settings.trading_starting_cash
+    tax_estimate = estimate_polish_tax(
+        starting_equity=starting_cash,
+        current_equity=final_snapshot.equity,
+        realized_pnl_before_explicit_costs=final_snapshot.realized_pnl,
+        explicit_execution_and_financing_costs=(
+            final_snapshot.cash_execution_fees
+            + final_snapshot.borrow_costs
+            + final_snapshot.dividend_replacement_costs
+            + final_snapshot.margin_interest_costs
+        ),
+        funding_fx_cost=replay_cost_model.funding.estimated_conversion_cost_usd,
+        config=replay_cost_model.polish_tax,
+    )
     report: dict[str, object] = {
         "schema_version": 2,
         "replay_kind": "shared_engine_historical_replay",
@@ -289,6 +313,16 @@ async def run_historical_replay(
             "dividend_replacement_rate_annual": (
                 settings.trading_dividend_replacement_rate_annual
             ),
+            "margin_interest_rate_annual": (
+                settings.trading_margin_interest_rate_annual
+            ),
+            "commission_bps": settings.trading_commission_bps,
+            "regulatory_sell_fee_bps": (
+                settings.trading_regulatory_sell_fee_bps
+            ),
+            "market_impact_stress_bps": (
+                settings.trading_market_impact_stress_bps
+            ),
             "max_daily_loss_pct": settings.trading_max_daily_loss_pct,
             "max_drawdown_pct": settings.trading_max_drawdown_pct,
             "minimum_confidence": settings.trading_min_confidence,
@@ -315,8 +349,16 @@ async def run_historical_replay(
                 "dividend_replacement_costs": (
                     final_snapshot.dividend_replacement_costs
                 ),
+                "margin_interest_costs": final_snapshot.margin_interest_costs,
             },
+            "execution_costs": final_snapshot.execution_costs,
+            "funding_fx_costs": final_snapshot.funding_fx_costs,
         },
+        "cost_model": {
+            "manifest": replay_cost_model.model_dump(mode="json"),
+            "manifest_sha256": replay_cost_model.manifest_sha256,
+        },
+        "estimated_after_tax_summary": tax_estimate.model_dump(mode="json"),
         "final_portfolio": final_portfolio,
         "events": {
             "counts": dict(sorted(event_counts.items())),

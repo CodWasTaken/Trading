@@ -10,6 +10,8 @@ from itertools import groupby
 from pathlib import Path
 from statistics import fmean, pstdev
 
+from .cost_model import CostModelConfig, legacy_cost_model
+
 
 @dataclass(frozen=True)
 class FeatureRow:
@@ -38,6 +40,8 @@ class BacktestMetrics:
     excess_return_vs_benchmark: float = 0.0
     news_ablation_sharpe: float = 0.0
     news_sharpe_delta: float = 0.0
+    execution_cost_return: float = 0.0
+    financing_cost_return: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -265,6 +269,7 @@ def _simulate(
     folds: int,
     purged_rows: int,
     always_long: bool = False,
+    cost_model: CostModelConfig | None = None,
 ) -> _Simulation:
     selected_groups = _selected_groups(scored_rows)
     previous_positions: dict[str, float] = defaultdict(float)
@@ -279,6 +284,9 @@ def _simulate(
     symbol_wins: dict[str, int] = defaultdict(int)
     symbol_turnover: dict[str, float] = defaultdict(float)
     symbol_total_net: dict[str, float] = defaultdict(float)
+    total_execution_cost = 0.0
+    total_financing_cost = 0.0
+    resolved_costs = cost_model or legacy_cost_model(transaction_cost_bps)
 
     for timestamp_rows in selected_groups:
         allocation = 1.0 / len(timestamp_rows)
@@ -286,10 +294,21 @@ def _simulate(
         for item in timestamp_rows:
             row = item.row
             position = 1.0 if always_long or item.prediction > threshold else 0.0
-            trade_turnover = abs(position - previous_positions[row.symbol])
-            cost = trade_turnover * transaction_cost_bps / 10_000
+            previous = previous_positions[row.symbol]
+            trade_turnover = abs(position - previous)
+            execution_cost = resolved_costs.execution.trade_cost_fraction(
+                previous,
+                position,
+            )
+            financing_cost = resolved_costs.execution.holding_cost_fraction(
+                position,
+                periods_per_year,
+            )
+            cost = execution_cost + financing_cost
             net = position * row.target_return - cost
             period_net += allocation * net
+            total_execution_cost += allocation * execution_cost
+            total_financing_cost += allocation * financing_cost
             turnover += trade_turnover
             symbol_turnover[row.symbol] += trade_turnover
             symbol_returns[row.symbol].append(net)
@@ -304,17 +323,21 @@ def _simulate(
             previous_positions[row.symbol] = position
         period_returns.append(period_net)
 
-    metrics = _metrics_from_returns(
-        period_returns,
-        observations=observations,
-        scored_observations=len(scored_rows),
-        active=active,
-        wins=wins,
-        active_net_return=active_net_return,
-        turnover=turnover,
-        folds=folds,
-        purged_rows=purged_rows,
-        periods_per_year=periods_per_year,
+    metrics = replace(
+        _metrics_from_returns(
+            period_returns,
+            observations=observations,
+            scored_observations=len(scored_rows),
+            active=active,
+            wins=wins,
+            active_net_return=active_net_return,
+            turnover=turnover,
+            folds=folds,
+            purged_rows=purged_rows,
+            periods_per_year=periods_per_year,
+        ),
+        execution_cost_return=total_execution_cost,
+        financing_cost_return=total_financing_cost,
     )
     symbols: dict[str, dict[str, float | int]] = {}
     for symbol, returns in sorted(symbol_returns.items()):
@@ -339,6 +362,7 @@ def backtest(
     threshold: float = 0.0005,
     transaction_cost_bps: float = 5.0,
     periods_per_year: float = 252,
+    cost_model: CostModelConfig | None = None,
 ) -> BacktestMetrics:
     if not rows:
         raise ValueError("Backtest requires rows")
@@ -350,6 +374,7 @@ def backtest(
         periods_per_year=periods_per_year,
         folds=1,
         purged_rows=0,
+        cost_model=cost_model,
     ).metrics
 
 
@@ -378,7 +403,10 @@ def _score_walk_forward(
         if cursor + test_rows > len(ordered):
             break
         test_end = cursor + test_rows
-        while test_end < len(ordered) and ordered[test_end - 1].timestamp == ordered[test_end].timestamp:
+        while (
+            test_end < len(ordered)
+            and ordered[test_end - 1].timestamp == ordered[test_end].timestamp
+        ):
             test_end += 1
         test_block = ordered[cursor:test_end]
         test_start = test_block[0].timestamp
@@ -415,6 +443,7 @@ def walk_forward(
     periods_per_year: float = 252,
     threshold: float = 0.0005,
     ridge: float = 1e-3,
+    cost_model: CostModelConfig | None = None,
 ) -> BacktestMetrics:
     scored = _score_walk_forward(
         rows,
@@ -430,6 +459,7 @@ def walk_forward(
         periods_per_year=periods_per_year,
         folds=scored.folds,
         purged_rows=scored.purged_rows,
+        cost_model=cost_model,
     ).metrics
 
 
@@ -443,6 +473,7 @@ def walk_forward_report(
     periods_per_year: float = 252,
     threshold: float = 0.0005,
     ridge: float = 1e-3,
+    cost_model: CostModelConfig | None = None,
 ) -> WalkForwardReport:
     scored = _score_walk_forward(
         rows,
@@ -458,6 +489,7 @@ def walk_forward_report(
         periods_per_year=periods_per_year,
         folds=scored.folds,
         purged_rows=scored.purged_rows,
+        cost_model=cost_model,
     )
     benchmark = _simulate(
         scored.rows,
@@ -467,6 +499,7 @@ def walk_forward_report(
         folds=scored.folds,
         purged_rows=scored.purged_rows,
         always_long=True,
+        cost_model=cost_model,
     )
 
     no_news_metrics: BacktestMetrics | None = None
@@ -501,6 +534,7 @@ def walk_forward_report(
             periods_per_year=periods_per_year,
             folds=ablation_scored.folds,
             purged_rows=ablation_scored.purged_rows,
+            cost_model=cost_model,
         ).metrics
 
     metrics = replace(

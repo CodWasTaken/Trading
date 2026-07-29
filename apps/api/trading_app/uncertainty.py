@@ -6,6 +6,7 @@ import random
 from collections import defaultdict
 from typing import Any
 
+from .cost_model import CostModelConfig, legacy_cost_model
 from .research import _ScoredRow, _selected_groups
 
 
@@ -15,18 +16,27 @@ def simulation_period_returns(
     threshold: float,
     transaction_cost_bps: float,
     always_long: bool = False,
+    cost_model: CostModelConfig | None = None,
+    periods_per_year: float = 252,
 ) -> list[float]:
     selected_groups = _selected_groups(scored_rows)
     previous_positions: dict[str, float] = defaultdict(float)
     period_returns: list[float] = []
+    resolved_costs = cost_model or legacy_cost_model(transaction_cost_bps)
     for timestamp_rows in selected_groups:
         allocation = 1.0 / len(timestamp_rows)
         period_net = 0.0
         for item in timestamp_rows:
             row = item.row
             position = 1.0 if always_long or item.prediction > threshold else 0.0
-            turnover = abs(position - previous_positions[row.symbol])
-            cost = turnover * transaction_cost_bps / 10_000
+            previous = previous_positions[row.symbol]
+            cost = resolved_costs.execution.trade_cost_fraction(
+                previous,
+                position,
+            ) + resolved_costs.execution.holding_cost_fraction(
+                position,
+                periods_per_year,
+            )
             period_net += allocation * (position * row.target_return - cost)
             previous_positions[row.symbol] = position
         period_returns.append(period_net)
@@ -136,7 +146,8 @@ def block_bootstrap_evidence(
         },
         "interpretation": [
             "Intervals describe resampled historical uncertainty, not guaranteed future outcomes.",
-            "Bonferroni adjustment uses the predeclared candidate family size from the sealed split.",
+            "Bonferroni adjustment uses the predeclared candidate family size from "
+            "the sealed split.",
             "Serial dependence is approximated with circular moving blocks.",
         ],
     }

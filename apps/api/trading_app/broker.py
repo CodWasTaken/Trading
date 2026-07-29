@@ -8,6 +8,7 @@ import httpx
 from pydantic import BaseModel
 
 from .config import Settings
+from .cost_model import ExecutionCostConfig
 from .domain import Fill, Order, Quote, Side
 
 
@@ -27,8 +28,26 @@ class Broker(Protocol):
 
 
 class InternalPaperBroker:
-    def __init__(self, slippage_bps: float = 2.0) -> None:
-        self.slippage_bps = slippage_bps
+    def __init__(
+        self,
+        slippage_bps: float | None = None,
+        *,
+        cost_config: ExecutionCostConfig | None = None,
+    ) -> None:
+        self.cost_config = cost_config or ExecutionCostConfig(
+            observed_spread_bps=0,
+            slippage_bps=2.0 if slippage_bps is None else slippage_bps,
+            regulatory_sell_fee_bps=0,
+            market_impact_stress_bps=0,
+            borrow_rate_annual=0,
+            margin_interest_rate_annual=0,
+            dividend_replacement_rate_annual=0,
+        )
+        self.slippage_bps = (
+            self.cost_config.slippage_bps
+            if slippage_bps is None
+            else slippage_bps
+        )
 
     async def execute(self, order: Order, quote: Quote) -> Fill:
         multiplier = self.slippage_bps / 10_000
@@ -43,6 +62,14 @@ class InternalPaperBroker:
             quantity=order.quantity,
             price=price,
             slippage_bps=self.slippage_bps,
+            **_fill_costs(
+                order.side,
+                order.quantity,
+                quote,
+                price,
+                self.slippage_bps,
+                self.cost_config,
+            ),
         )
 
 
@@ -59,6 +86,7 @@ class AlpacaPaperBroker:
         self.base_url = settings.alpaca_trading_base_url.rstrip("/")
         self.fill_timeout_seconds = settings.trading_order_fill_timeout_seconds
         self.poll_interval_seconds = settings.trading_order_poll_interval_seconds
+        self.cost_config = _execution_costs_from_settings(settings)
         self.client = httpx.AsyncClient(
             base_url=self.base_url,
             timeout=15,
@@ -117,8 +145,8 @@ class AlpacaPaperBroker:
             await asyncio.sleep(self.poll_interval_seconds)
             latest = await self.get_order(broker_order_id)
 
-    @staticmethod
     def _fill_from_broker(
+        self,
         order: Order,
         quote: Quote,
         quantity: float,
@@ -135,6 +163,14 @@ class AlpacaPaperBroker:
             quantity=quantity,
             price=price,
             slippage_bps=slippage_bps,
+            **_fill_costs(
+                order.side,
+                quantity,
+                quote,
+                price,
+                max(0.0, slippage_bps),
+                self.cost_config,
+            ),
         )
 
     async def get_positions(self) -> list[BrokerPosition]:
@@ -152,3 +188,45 @@ class AlpacaPaperBroker:
 
     async def close(self) -> None:
         await self.client.aclose()
+
+
+def _execution_costs_from_settings(settings: Settings) -> ExecutionCostConfig:
+    return ExecutionCostConfig(
+        observed_spread_bps=0,
+        slippage_bps=settings.trading_slippage_bps,
+        commission_bps=settings.trading_commission_bps,
+        regulatory_sell_fee_bps=settings.trading_regulatory_sell_fee_bps,
+        market_impact_stress_bps=settings.trading_market_impact_stress_bps,
+        borrow_rate_annual=settings.trading_borrow_rate_annual,
+        margin_interest_rate_annual=settings.trading_margin_interest_rate_annual,
+        dividend_replacement_rate_annual=(
+            settings.trading_dividend_replacement_rate_annual
+        ),
+    )
+
+
+def _fill_costs(
+    side: Side,
+    quantity: float,
+    quote: Quote,
+    price: float,
+    slippage_bps: float,
+    config: ExecutionCostConfig,
+) -> dict[str, float]:
+    notional = quantity * price
+    observed_spread_cost = quantity * (
+        quote.ask - quote.mid if side == Side.BUY else quote.mid - quote.bid
+    )
+    return {
+        "observed_spread_cost": max(0.0, observed_spread_cost),
+        "slippage_cost": notional * max(0.0, slippage_bps) / 10_000,
+        "commission": notional * config.commission_bps / 10_000,
+        "regulatory_fees": (
+            notional * config.regulatory_sell_fee_bps / 10_000
+            if side == Side.SELL
+            else 0.0
+        ),
+        "market_impact_stress_cost": (
+            notional * config.market_impact_stress_bps / 10_000
+        ),
+    }

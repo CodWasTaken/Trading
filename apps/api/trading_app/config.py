@@ -37,6 +37,18 @@ class Settings(BaseSettings):
     trading_borrow_status_max_age_seconds: int = Field(default=300, gt=0)
     trading_borrow_rate_annual: float = 0.03
     trading_dividend_replacement_rate_annual: float = 0.02
+    trading_slippage_bps: float = Field(default=2.0, ge=0)
+    trading_commission_bps: float = Field(default=0.0, ge=0)
+    trading_regulatory_sell_fee_bps: float = Field(default=0.05, ge=0)
+    trading_market_impact_stress_bps: float = Field(default=2.0, ge=0)
+    trading_margin_interest_rate_annual: float = Field(default=0.08, ge=0)
+    trading_pln_to_usd_conversion_bps: float = Field(default=0.0, ge=0)
+    trading_pln_to_usd_conversion_amount_usd: float = Field(default=0.0, ge=0)
+    trading_estimated_polish_capital_gains_rate: float = Field(
+        default=0.19,
+        ge=0,
+        le=1,
+    )
     trading_max_daily_loss_pct: float = 0.01
     trading_max_drawdown_pct: float = 0.08
     trading_min_confidence: float = 0.65

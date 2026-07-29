@@ -17,6 +17,11 @@ A private, risk-first AI-assisted paper-trading platform. It ingests market data
   buying power, explicit easy-to-borrow checks, drawdown, confidence, and
   stale-data controls
 - Conservative internal paper broker with spread and slippage
+- Versioned cost manifests separating observed spread, slippage, commissions,
+  regulatory sell fees, impact stress, borrow, margin interest, dividend
+  replacement, and optional PLN→USD funding conversion
+- Separate estimated Polish tax reports that preserve pre-tax strategy results
+  and are explicitly labelled as estimates, not tax advice
 - Alpaca paper adapter that waits for actual filled quantity and average price instead of booking estimated fills
 - Broker-position reconciliation endpoint and execution-error audit events
 - Protected state-changing controls through an optional API key
@@ -50,6 +55,12 @@ quantity crossing through zero opens a short. The signed ledger records long and
 short entry/increase, partial exit, full exit, and reversal separately. Short
 sale proceeds increase cash but the negative marked position remains in equity.
 Borrow and dividend-replacement assumptions are configurable paper costs.
+
+Execution costs are applied before pre-tax strategy performance is reported.
+PLN→USD conversion is an optional funding cash flow and is never multiplied by
+trade turnover. Estimated Polish capital-gains tax is reported separately at
+`GET /v1/reports/polish-tax-estimate`; it is never subtracted from individual
+fills. The estimate is deliberately simplified and is not tax advice.
 
 ## Quick start
 
@@ -197,6 +208,7 @@ trading-research train \
   --minimum-train-rows 500 \
   --test-rows 100 \
   --transaction-cost-bps 5 \
+  --cost-config config/costs/conservative-us-paper-v1.json \
   --periods-per-year 1638
 ```
 
