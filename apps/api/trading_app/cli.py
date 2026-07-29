@@ -31,6 +31,12 @@ from .research import (
     walk_forward,
     walk_forward_report,
 )
+from .universe import (
+    assert_universe_binding,
+    assert_universe_symbols,
+    assert_universe_time_range,
+    load_universe_manifest,
+)
 
 FEATURE_NAMES = ("momentum", "news_score", "volatility", "spread_bps")
 ModelType = TypeVar("ModelType", bound=BaseModel)
@@ -126,11 +132,28 @@ def build_dataset(
     forecast_bars: int,
     bar_minutes: int,
     news_window_hours: float,
+    universe_manifest_path: str | None = None,
 ) -> dict[str, object]:
     bars_source = Path(bars_path)
     news_source = Path(news_path)
     bars = _load_json_lines(bars_source, HistoricalBar)
     news = _load_json_lines(news_source, NewsEvent)
+    universe = (
+        None
+        if universe_manifest_path is None
+        else load_universe_manifest(universe_manifest_path)
+    )
+    if universe is not None:
+        assert_universe_symbols(
+            {bar.symbol for bar in bars},
+            universe,
+            context="historical bars",
+        )
+        assert_universe_time_range(
+            [bar.timestamp for bar in bars],
+            universe,
+            context="historical bars",
+        )
     builder = HistoricalPointInTimeDatasetBuilder(
         lookback_bars=lookback_bars,
         forecast_bars=forecast_bars,
@@ -140,6 +163,12 @@ def build_dataset(
     rows = builder.build(bars, news)
     if not rows:
         raise ValueError("Historical inputs did not produce any feature rows")
+    if universe is not None:
+        assert_universe_symbols(
+            {row.symbol for row in rows},
+            universe,
+            context="feature dataset rows",
+        )
     symbols = sorted({row.symbol for row in rows})
     metadata: dict[str, object] = {
         "created_at": datetime.now(UTC).isoformat(),
@@ -173,6 +202,8 @@ def build_dataset(
             "Historical OHLC bars do not contain bid/ask spread, so the model excludes spread_bps; live risk checks still enforce spread limits.",
         ],
     }
+    if universe is not None:
+        metadata["universe"] = universe.binding(universe_manifest_path)
     destination, metadata_path = write_feature_dataset(
         output,
         rows,
@@ -208,8 +239,25 @@ def train_dataset(
     minimum_excess_return: float = 0.0,
     minimum_news_sharpe_delta: float = 0.0,
     cost_config_path: str | None = None,
+    universe_manifest_path: str | None = None,
 ) -> dict[str, object]:
     rows, feature_names, dataset_metadata = load_feature_dataset(dataset_path)
+    universe = (
+        None
+        if universe_manifest_path is None
+        else load_universe_manifest(universe_manifest_path)
+    )
+    if universe is not None:
+        assert_universe_binding(
+            dataset_metadata,
+            universe,
+            context="calibration dataset",
+        )
+        assert_universe_symbols(
+            {row.symbol for row in rows},
+            universe,
+            context="calibration dataset rows",
+        )
     forecast_bars = max(1, int(dataset_metadata.get("forecast_bars", 1)))
     effective_periods_per_year = periods_per_year / forecast_bars
     cost_model = (
@@ -242,6 +290,7 @@ def train_dataset(
             "dataset_metadata": dataset_metadata,
             "rows": len(rows),
             "feature_names": list(feature_names),
+            "universe": dataset_metadata.get("universe"),
             "validation": {
                 "method": "stitched_non_overlapping_expanding_walk_forward_with_label_purge",
                 "minimum_train_rows": minimum_train_rows,
@@ -370,6 +419,10 @@ def build_parser() -> argparse.ArgumentParser:
     dataset.add_argument("--forecast-bars", type=int, default=5)
     dataset.add_argument("--bar-minutes", type=int, default=60)
     dataset.add_argument("--news-window-hours", type=float, default=24.0)
+    dataset.add_argument(
+        "--universe-manifest",
+        default="config/universes/us-liquid-large-cap-v1.json",
+    )
 
     real_train = subparsers.add_parser(
         "train",
@@ -385,6 +438,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--cost-config",
         default="config/costs/conservative-us-paper-v1.json",
         help="Versioned execution/funding/tax cost manifest JSON",
+    )
+    real_train.add_argument(
+        "--universe-manifest",
+        default="config/universes/us-liquid-large-cap-v1.json",
     )
     real_train.add_argument("--periods-per-year", type=int, default=1638)
     real_train.add_argument("--threshold", type=float, default=0.0005)
@@ -415,6 +472,10 @@ def build_parser() -> argparse.ArgumentParser:
     replay.add_argument("--slippage-bps", type=float, default=2.0)
     replay.add_argument("--starting-cash", type=float)
     replay.add_argument(
+        "--universe-manifest",
+        default="config/universes/us-liquid-large-cap-v1.json",
+    )
+    replay.add_argument(
         "--signal-threshold",
         type=float,
         help="Override 0.16 explainable combined-score or 0.0005 champion edge",
@@ -437,6 +498,10 @@ def build_parser() -> argparse.ArgumentParser:
     diagnostics.add_argument("--spread-bps", type=float, default=10.0)
     diagnostics.add_argument("--slippage-bps", type=float, default=2.0)
     diagnostics.add_argument("--starting-cash", type=float)
+    diagnostics.add_argument(
+        "--universe-manifest",
+        default="config/universes/us-liquid-large-cap-v1.json",
+    )
     diagnostics.add_argument(
         "--thresholds",
         default="0.08,0.12,0.16,0.20,0.24",
@@ -488,6 +553,7 @@ def main() -> None:
             forecast_bars=arguments.forecast_bars,
             bar_minutes=arguments.bar_minutes,
             news_window_hours=arguments.news_window_hours,
+            universe_manifest_path=arguments.universe_manifest,
         )
     elif arguments.command == "train":
         result = train_dataset(
@@ -507,6 +573,7 @@ def main() -> None:
             minimum_excess_return=arguments.minimum_excess_return,
             minimum_news_sharpe_delta=arguments.minimum_news_sharpe_delta,
             cost_config_path=arguments.cost_config,
+            universe_manifest_path=arguments.universe_manifest,
         )
     elif arguments.command == "replay":
         result = asyncio.run(
@@ -524,6 +591,7 @@ def main() -> None:
                 slippage_bps=arguments.slippage_bps,
                 starting_cash=arguments.starting_cash,
                 signal_threshold=arguments.signal_threshold,
+                universe_manifest_path=arguments.universe_manifest,
             )
         )
     elif arguments.command == "replay-report":
@@ -545,6 +613,7 @@ def main() -> None:
                 sector_map_path=arguments.sector_map,
                 regime_lookback=arguments.regime_lookback,
                 regime_momentum_threshold=arguments.regime_momentum_threshold,
+                universe_manifest_path=arguments.universe_manifest,
             )
         )
     elif arguments.command == "audit-ledger":

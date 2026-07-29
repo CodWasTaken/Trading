@@ -9,6 +9,7 @@ from pathlib import Path
 from statistics import fmean, median, pstdev
 
 from .historical import HistoricalBar
+from .model_registry import ModelRegistry
 from .replay import ReplayResult, run_historical_replay
 from .replay_cli import (
     build_strategy_factory,
@@ -16,6 +17,12 @@ from .replay_cli import (
     minutes,
     replay_settings,
     replay_source_metadata,
+)
+from .universe import (
+    assert_universe_binding,
+    assert_universe_symbols,
+    assert_universe_time_range,
+    load_universe_manifest,
 )
 
 
@@ -37,6 +44,7 @@ async def build_replay_diagnostics(
     sector_map_path: str | None,
     regime_lookback: int,
     regime_momentum_threshold: float,
+    universe_manifest_path: str | None = None,
 ) -> dict[str, object]:
     if not thresholds:
         raise ValueError("At least one threshold is required")
@@ -50,8 +58,37 @@ async def build_replay_diagnostics(
     bars_source = Path(bars_path)
     news_source = Path(news_path)
     bars, news = load_replay_inputs(bars_source, news_source)
+    universe = (
+        None
+        if universe_manifest_path is None
+        else load_universe_manifest(universe_manifest_path)
+    )
+    if universe is not None:
+        assert_universe_symbols(
+            {bar.symbol for bar in bars},
+            universe,
+            context="replay diagnostics bars",
+        )
+        assert_universe_time_range(
+            [bar.timestamp for bar in bars],
+            universe,
+            context="replay diagnostics bars",
+        )
+        if strategy_mode == "champion":
+            champion = ModelRegistry(registry_path).champion()
+            if champion is None:
+                raise ValueError(
+                    "Champion replay diagnostics requested but registry has no champion"
+                )
+            assert_universe_binding(
+                {"universe": champion.metadata.get("universe")},
+                universe,
+                context="replay diagnostics champion",
+            )
     settings = replay_settings(starting_cash)
     sources = replay_source_metadata(bars_source, news_source, bars, news)
+    if universe is not None:
+        sources["universe"] = universe.binding(universe_manifest_path)
     interval = minutes(bar_minutes)
     unique_thresholds = list(dict.fromkeys(float(value) for value in thresholds))
     default_reference = 0.16 if strategy_mode == "explainable" else 0.0005

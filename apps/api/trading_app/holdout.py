@@ -11,6 +11,11 @@ from .dataset import dataset_metadata_path, load_feature_dataset, write_feature_
 from .model_registry import ModelRegistry
 from .research import _ScoredRow, _simulate, metrics_dict
 from .uncertainty import block_bootstrap_evidence, simulation_period_returns
+from .universe import (
+    assert_universe_binding,
+    assert_universe_symbols,
+    load_universe_manifest,
+)
 
 
 def split_feature_dataset(
@@ -24,6 +29,7 @@ def split_feature_dataset(
     bootstrap_samples: int = 2000,
     confidence_level: float = 0.95,
     bootstrap_block_size: int | None = None,
+    universe_manifest_path: str | None = None,
 ) -> dict[str, object]:
     source = Path(dataset_path)
     calibration_destination = Path(calibration_output)
@@ -61,6 +67,22 @@ def split_feature_dataset(
 
     boundary = _as_utc(split_time)
     rows, feature_names, source_metadata = load_feature_dataset(source)
+    universe = (
+        None
+        if universe_manifest_path is None
+        else load_universe_manifest(universe_manifest_path)
+    )
+    if universe is not None:
+        assert_universe_binding(
+            source_metadata,
+            universe,
+            context="split source dataset",
+        )
+        assert_universe_symbols(
+            {row.symbol for row in rows},
+            universe,
+            context="split source rows",
+        )
     source_sha256 = _sha256(source)
     source_metadata_path = dataset_metadata_path(source)
     source_metadata_sha256 = _sha256(source_metadata_path)
@@ -101,6 +123,17 @@ def split_feature_dataset(
         raise ValueError("Split produced no calibration rows")
     if not holdout_rows:
         raise ValueError("Split produced no untouched holdout rows")
+    if universe is not None:
+        assert_universe_symbols(
+            {row.symbol for row in calibration_rows},
+            universe,
+            context="calibration split rows",
+        )
+        assert_universe_symbols(
+            {row.symbol for row in holdout_rows},
+            universe,
+            context="holdout split rows",
+        )
     if max(row.timestamp for row in calibration_rows) >= boundary:
         raise RuntimeError("Calibration split crossed the holdout boundary")
     if any(
@@ -138,6 +171,8 @@ def split_feature_dataset(
         },
         "source_metadata": source_metadata,
     }
+    if universe is not None:
+        common_metadata["universe"] = universe.binding(universe_manifest_path)
     calibration_path, calibration_metadata_path = write_feature_dataset(
         calibration_destination,
         calibration_rows,
@@ -191,6 +226,7 @@ def split_feature_dataset(
         },
         "purged_boundary_rows": len(purged_boundary_rows),
         "controls": common_metadata["point_in_time_controls"],
+        "universe": common_metadata.get("universe"),
         "limitations": [
             "A holdout remains independent only while humans avoid inspecting outcomes and tuning to them.",
             "The split boundary and candidate family size must be selected before examining holdout performance.",
@@ -212,6 +248,7 @@ def evaluate_untouched_holdout(
     output_path: str,
     *,
     version: str | None = None,
+    universe_manifest_path: str | None = None,
 ) -> dict[str, object]:
     source = Path(dataset_path)
     destination = Path(output_path)
@@ -219,6 +256,22 @@ def evaluate_untouched_holdout(
         raise ValueError(f"Holdout evaluation output already exists: {destination}")
 
     rows, feature_names, metadata = load_feature_dataset(source)
+    universe = (
+        None
+        if universe_manifest_path is None
+        else load_universe_manifest(universe_manifest_path)
+    )
+    if universe is not None:
+        assert_universe_binding(
+            metadata,
+            universe,
+            context="holdout dataset",
+        )
+        assert_universe_symbols(
+            {row.symbol for row in rows},
+            universe,
+            context="holdout rows",
+        )
     if metadata.get("dataset_role") != "untouched_holdout" or metadata.get("sealed") is not True:
         raise ValueError("Dataset is not a sealed untouched_holdout split")
     split_payload = metadata.get("split")
@@ -240,6 +293,15 @@ def evaluate_untouched_holdout(
     model_record = registry.get(version) if version else registry.challenger()
     if model_record is None:
         raise ValueError("No challenger is registered; specify --version explicitly")
+    if universe is not None:
+        model_binding = model_record.metadata.get("universe")
+        if not isinstance(model_binding, dict):
+            raise ValueError("Registered model lacks a frozen universe binding")
+        assert_universe_binding(
+            {"universe": model_binding},
+            universe,
+            context="registered model",
+        )
     model = registry.load(model_record.version)
     if tuple(model.feature_names) != tuple(feature_names):
         raise ValueError(

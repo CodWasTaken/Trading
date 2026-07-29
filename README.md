@@ -12,6 +12,8 @@ A private, risk-first AI-assisted paper-trading platform. It ingests market data
 - Headline deduplication, novelty scoring, source-quality weighting, sentiment, and catalyst classification
 - SEC EDGAR recent-filings client and API endpoint
 - Point-in-time dataset builders that join news by `knowledge_time` and timestamp bar features when the close is actually known
+- A versioned, hashed 48-stock multi-sector universe manifest bound exactly to
+  datasets, calibration, holdout, replay, and paper runtime
 - Explainable signal engine and news catalyst scoring
 - Non-bypassable risk engine with kill switch, signed long/short limits, margin
   buying power, explicit easy-to-borrow checks, drawdown, confidence, and
@@ -48,6 +50,11 @@ market/news -> features -> strategy proposal -> risk engine -> paper broker -> a
 ```
 
 Any stale feed, kill switch, daily-loss breach, drawdown breach, oversized position, excessive spread, duplicate signal, low-confidence proposal, broker rejection, or fill timeout fails closed.
+
+Paper startup and governed research also fail closed when their symbols do not
+exactly match the declared frozen universe. Historical experiments must use the
+manifest effective for that experiment; today’s large companies must never be
+projected backward into an earlier untouched period.
 
 Short opening also fails closed unless the paper runtime has a current explicit
 easy-to-borrow status. A `SELL` first reduces any long inventory; only the

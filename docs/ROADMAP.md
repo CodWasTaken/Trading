@@ -36,6 +36,22 @@ The bundled conservative manifest is an initial paper assumption. It must be
 reviewed against observed paper fills and current broker schedules; it is not a
 claim about future achievable costs.
 
+## Frozen major-stock universe
+
+Implemented in version 0.19.0:
+
+- 48 U.S.-listed common stocks across nine sectors
+- effective date, inclusion rules, liquidity/price/coverage thresholds, and
+  shortability requirements
+- hashed source declaration and canonical manifest hash
+- exact binding for datasets, calibration, holdout, replay, diagnostics, and
+  paper runtime
+- fail-closed symbol, binding, source-hash, manifest-hash, and effective-date checks
+
+The declaration source is not a substitute for archived point-in-time vendor
+evidence. A later list must receive a new universe ID and effective date; it
+cannot retroactively redefine an earlier experiment or untouched holdout.
+
 ## Milestone 1 — durable data and replay
 
 Implemented foundation:

@@ -26,6 +26,11 @@ from .sec import SecEdgarClient
 from .store import EventStore
 from .strategy import ExplainableCatalystStrategy
 from .tax import estimate_polish_tax
+from .universe import (
+    assert_universe_binding,
+    assert_universe_symbols,
+    load_universe_manifest,
+)
 
 
 class ControlRequest(BaseModel):
@@ -35,6 +40,14 @@ class ControlRequest(BaseModel):
 class AppState:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self.universe = load_universe_manifest(
+            settings.trading_universe_manifest_path
+        )
+        assert_universe_symbols(
+            settings.trading_symbols,
+            self.universe,
+            context="paper runtime",
+        )
         self.cost_model = cost_model_from_settings(settings)
         self.event_sink = SQLiteEventSink(settings.trading_database_path)
         self.store = EventStore(sink=self.event_sink)
@@ -57,9 +70,20 @@ class AppState:
             else InternalPaperBroker(cost_config=self.cost_model.execution)
         )
         registry = ModelRegistry(settings.trading_model_registry_path)
-        champion = (
-            registry.load_champion()
+        champion_record = (
+            registry.champion()
             if settings.trading_strategy_mode == "champion"
+            else None
+        )
+        if champion_record is not None:
+            assert_universe_binding(
+                {"universe": champion_record.metadata.get("universe")},
+                self.universe,
+                context="paper champion",
+            )
+        champion = (
+            registry.load(champion_record.version)
+            if champion_record is not None
             else None
         )
         strategy = (
@@ -185,6 +209,9 @@ async def dashboard_summary(current: StateDependency) -> dict[str, object]:
         "kill_switch": current.risk.kill_switch,
         "engine_running": current.engine.running,
         "symbols": current.settings.trading_symbols,
+        "universe": current.universe.binding(
+            current.settings.trading_universe_manifest_path
+        ),
         "active_strategy": current.active_strategy,
         "model_registry": current.model_registry.summary(),
         "feed_health": feed_health,
