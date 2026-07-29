@@ -34,7 +34,15 @@ class AppState:
         self.settings = settings
         self.event_sink = SQLiteEventSink(settings.trading_database_path)
         self.store = EventStore(sink=self.event_sink)
-        self.portfolio = Portfolio(settings.trading_starting_cash)
+        self.portfolio = Portfolio(
+            settings.trading_starting_cash,
+            initial_margin_requirement=settings.trading_initial_margin_requirement,
+            maintenance_margin_requirement=settings.trading_maintenance_margin_requirement,
+            borrow_rate_annual=settings.trading_borrow_rate_annual,
+            dividend_replacement_rate_annual=(
+                settings.trading_dividend_replacement_rate_annual
+            ),
+        )
         self.risk = RiskEngine(settings)
         self.broker = (
             AlpacaPaperBroker(settings)
@@ -144,6 +152,22 @@ async def dashboard_summary(current: StateDependency) -> dict[str, object]:
     return {
         "application_version": __version__,
         "portfolio": portfolio.model_dump(mode="json"),
+        "risk_attribution": {
+            "long": {
+                "gross_exposure": portfolio.gross_long_exposure,
+                "realized_pnl": portfolio.long_realized_pnl,
+                "unrealized_pnl": portfolio.long_unrealized_pnl,
+            },
+            "short": {
+                "gross_exposure": portfolio.gross_short_exposure,
+                "realized_pnl": portfolio.short_realized_pnl,
+                "unrealized_pnl": portfolio.short_unrealized_pnl,
+                "borrow_costs": portfolio.borrow_costs,
+                "dividend_replacement_costs": (
+                    portfolio.dividend_replacement_costs
+                ),
+            },
+        },
         "kill_switch": current.risk.kill_switch,
         "engine_running": current.engine.running,
         "symbols": current.settings.trading_symbols,

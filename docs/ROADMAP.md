@@ -2,6 +2,24 @@
 
 The repository contains a working vertical slice, not a validated profitable strategy. Build outward in this order.
 
+## Signed long/short accounting
+
+Implemented in version 0.17.0:
+
+- signed position quantities and direction-aware average entry prices
+- short entry/increase, partial/full cover, and two-way reversal accounting
+- long/short realized and unrealized PnL attribution
+- short-sale cash proceeds with negative marked inventory included in equity
+- gross long, gross short, net exposure, initial buying power, and maintenance margin
+- separate long/short position and aggregate limits
+- fail-closed easy-to-borrow validation only on short-opening quantities
+- configurable borrow and dividend-replacement carrying costs
+- auditable borrow-recall and forced-cover abstractions
+- deterministic replay coverage for short opening, covering, reversal, and rejection
+
+This is accounting and safety infrastructure, not evidence that a short strategy
+is profitable. All execution remains internal paper or Alpaca paper.
+
 ## Milestone 1 — durable data and replay
 
 Implemented foundation:

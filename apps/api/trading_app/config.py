@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -25,6 +25,18 @@ class Settings(BaseSettings):
     trading_decision_interval_seconds: float = 3.0
     trading_max_position_pct: float = 0.05
     trading_max_gross_exposure_pct: float = 0.60
+    trading_max_long_position_pct: float = 0.05
+    trading_max_short_position_pct: float = 0.03
+    trading_max_gross_long_exposure_pct: float = 0.60
+    trading_max_gross_short_exposure_pct: float = 0.30
+    trading_initial_margin_requirement: float = 0.50
+    trading_maintenance_margin_requirement: float = 0.30
+    trading_easy_to_borrow_symbols: Annotated[list[str], NoDecode] = Field(
+        default_factory=list
+    )
+    trading_borrow_status_max_age_seconds: int = Field(default=300, gt=0)
+    trading_borrow_rate_annual: float = 0.03
+    trading_dividend_replacement_rate_annual: float = 0.02
     trading_max_daily_loss_pct: float = 0.01
     trading_max_drawdown_pct: float = 0.08
     trading_min_confidence: float = 0.65
@@ -52,17 +64,47 @@ class Settings(BaseSettings):
     sec_user_agent: str | None = None
     sec_data_base_url: str = "https://data.sec.gov"
 
-    @field_validator("trading_symbols", "trading_cors_origins", mode="before")
+    @field_validator(
+        "trading_symbols",
+        "trading_cors_origins",
+        "trading_easy_to_borrow_symbols",
+        mode="before",
+    )
     @classmethod
     def split_csv(cls, value: object) -> object:
         if isinstance(value, str):
             return [part.strip() for part in value.split(",") if part.strip()]
         return value
 
-    @field_validator("trading_symbols")
+    @field_validator("trading_symbols", "trading_easy_to_borrow_symbols")
     @classmethod
     def normalize_symbols(cls, value: list[str]) -> list[str]:
         return list(dict.fromkeys(symbol.upper() for symbol in value))
+
+    @model_validator(mode="after")
+    def validate_risk_parameters(self) -> Settings:
+        fractions = {
+            "trading_max_long_position_pct": self.trading_max_long_position_pct,
+            "trading_max_short_position_pct": self.trading_max_short_position_pct,
+            "trading_max_gross_long_exposure_pct": self.trading_max_gross_long_exposure_pct,
+            "trading_max_gross_short_exposure_pct": self.trading_max_gross_short_exposure_pct,
+            "trading_initial_margin_requirement": self.trading_initial_margin_requirement,
+            "trading_maintenance_margin_requirement": (
+                self.trading_maintenance_margin_requirement
+            ),
+        }
+        if any(value <= 0 or value > 1 for value in fractions.values()):
+            raise ValueError("position, exposure, and margin fractions must be in (0, 1]")
+        if (
+            self.trading_maintenance_margin_requirement
+            > self.trading_initial_margin_requirement
+        ):
+            raise ValueError("maintenance margin cannot exceed initial margin")
+        if self.trading_borrow_rate_annual < 0:
+            raise ValueError("borrow rate cannot be negative")
+        if self.trading_dividend_replacement_rate_annual < 0:
+            raise ValueError("dividend replacement rate cannot be negative")
+        return self
 
     def require_alpaca_credentials(self) -> tuple[str, str]:
         if not self.alpaca_api_key or not self.alpaca_api_secret:

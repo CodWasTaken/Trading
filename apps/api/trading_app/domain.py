@@ -18,6 +18,19 @@ class Side(StrEnum):
     SELL = "sell"
 
 
+class PositionEffect(StrEnum):
+    OPEN_LONG = "open_long"
+    INCREASE_LONG = "increase_long"
+    PARTIAL_CLOSE_LONG = "partial_close_long"
+    CLOSE_LONG = "close_long"
+    OPEN_SHORT = "open_short"
+    INCREASE_SHORT = "increase_short"
+    PARTIAL_COVER_SHORT = "partial_cover_short"
+    COVER_SHORT = "cover_short"
+    REVERSE_LONG_TO_SHORT = "reverse_long_to_short"
+    REVERSE_SHORT_TO_LONG = "reverse_short_to_long"
+
+
 class DecisionStatus(StrEnum):
     PROPOSED = "proposed"
     APPROVED = "approved"
@@ -90,6 +103,7 @@ class Order(BaseModel):
     side: Side
     quantity: float = Field(gt=0)
     requested_price: float = Field(gt=0)
+    position_effect: PositionEffect | None = None
     status: str = "new"
     created_at: datetime = Field(default_factory=utc_now)
 
@@ -110,6 +124,7 @@ class Position(BaseModel):
     quantity: float
     average_price: float
     last_price: float
+    realized_pnl: float = 0.0
 
     @computed_field
     @property
@@ -121,11 +136,40 @@ class Position(BaseModel):
     def unrealized_pnl(self) -> float:
         return self.quantity * (self.last_price - self.average_price)
 
+    @computed_field
+    @property
+    def direction(self) -> str:
+        return "long" if self.quantity > 0 else "short"
+
+
+class PositionTransition(BaseModel):
+    symbol: str
+    side: Side
+    quantity: float
+    effect: PositionEffect
+    previous_quantity: float
+    resulting_quantity: float
+    realized_pnl: float
+
 
 class PortfolioSnapshot(BaseModel):
     cash: float
     equity: float
     gross_exposure: float
+    gross_long_exposure: float = 0.0
+    gross_short_exposure: float = 0.0
+    net_exposure: float = 0.0
+    buying_power: float | None = None
+    maintenance_margin_required: float = 0.0
+    margin_excess: float = 0.0
+    realized_pnl: float = 0.0
+    unrealized_pnl: float = 0.0
+    long_realized_pnl: float = 0.0
+    short_realized_pnl: float = 0.0
+    long_unrealized_pnl: float = 0.0
+    short_unrealized_pnl: float = 0.0
+    borrow_costs: float = 0.0
+    dividend_replacement_costs: float = 0.0
     daily_pnl: float
     drawdown: float
     positions: list[Position]

@@ -34,7 +34,9 @@ flowchart LR
 - `strategy.py`: explainable vertical-slice signal generator
 - `risk.py`: non-bypassable controls and kill switch
 - `broker.py`: conservative internal simulator and Alpaca paper adapter
-- `portfolio.py`: cash, positions, equity, exposure, and drawdown
+- `portfolio.py`: signed quantities, direction-aware average entry and P&L,
+  cash, margin, exposure, financing, and drawdown
+- `borrow.py`: fail-closed borrow status and forced-cover/recall abstractions
 - `store.py`: event ledger and WebSocket fan-out
 - `engine.py`: orchestration only; no hidden trading policy
 - `main.py`: HTTP/WebSocket interface and lifecycle
@@ -70,3 +72,21 @@ A production model should implement the `Strategy` protocol or feed a dedicated 
 ## Security boundary
 
 The dashboard control API requires authentication before internet deployment. Secrets belong in a secret manager, not `.env` in production. The Alpaca adapter deliberately points at `paper-api.alpaca.markets`; live execution is not implemented.
+
+## Signed position and borrow boundary
+
+Orders carry a position effect derived from current signed inventory. Sells can
+reduce or close a long, open or increase a short, or reverse long to short. Buys
+can increase a long, cover a short, or reverse short to long. A reversal realizes
+PnL on the closed quantity and starts the new direction at the fill price.
+
+Short-sale cash proceeds are credited to cash while the negative marked market
+value remains in equity. Gross long, gross short, net exposure, initial buying
+power, maintenance margin excess, and direction-specific realized/unrealized PnL
+are exposed in portfolio snapshots.
+
+The risk engine asks for borrow only for the notional that would open or increase
+a short. Missing, hard-to-borrow, unavailable, recalled, or insufficient status
+rejects the whole proposal. The configured ETB list is deterministic paper input;
+it is not a claim about live availability. Recall handling produces an explicit
+forced-cover instruction which remains inside the paper broker path.

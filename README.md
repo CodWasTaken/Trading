@@ -13,7 +13,9 @@ A private, risk-first AI-assisted paper-trading platform. It ingests market data
 - SEC EDGAR recent-filings client and API endpoint
 - Point-in-time dataset builders that join news by `knowledge_time` and timestamp bar features when the close is actually known
 - Explainable signal engine and news catalyst scoring
-- Non-bypassable risk engine with kill switch, exposure, drawdown, confidence, and stale-data controls
+- Non-bypassable risk engine with kill switch, signed long/short limits, margin
+  buying power, explicit easy-to-borrow checks, drawdown, confidence, and
+  stale-data controls
 - Conservative internal paper broker with spread and slippage
 - Alpaca paper adapter that waits for actual filled quantity and average price instead of booking estimated fills
 - Broker-position reconciliation endpoint and execution-error audit events
@@ -41,6 +43,13 @@ market/news -> features -> strategy proposal -> risk engine -> paper broker -> a
 ```
 
 Any stale feed, kill switch, daily-loss breach, drawdown breach, oversized position, excessive spread, duplicate signal, low-confidence proposal, broker rejection, or fill timeout fails closed.
+
+Short opening also fails closed unless the paper runtime has a current explicit
+easy-to-borrow status. A `SELL` first reduces any long inventory; only the
+quantity crossing through zero opens a short. The signed ledger records long and
+short entry/increase, partial exit, full exit, and reversal separately. Short
+sale proceeds increase cash but the negative marked position remains in equity.
+Borrow and dividend-replacement assumptions are configurable paper costs.
 
 ## Quick start
 
@@ -97,6 +106,9 @@ ALPACA_DATA_STREAM_URL=wss://stream.data.alpaca.markets/v2/iex
 ALPACA_NEWS_STREAM_URL=wss://stream.data.alpaca.markets/v1beta1/news
 TRADING_ORDER_FILL_TIMEOUT_SECONDS=15
 TRADING_ORDER_POLL_INTERVAL_SECONDS=0.25
+TRADING_EASY_TO_BORROW_SYMBOLS=AAPL,MSFT
+TRADING_MAX_SHORT_POSITION_PCT=0.03
+TRADING_MAX_GROSS_SHORT_EXPOSURE_PCT=0.30
 ```
 
 The paper adapter submits an order, polls until the broker reports an actual fill, uses the broker’s filled quantity and average price, and cancels an unfilled remainder on timeout. Check internal-versus-broker quantities with:
@@ -106,6 +118,11 @@ GET /v1/reconciliation
 ```
 
 The application intentionally does not support live-money execution. Adding it requires a separate adapter, explicit configuration, and a production-readiness review.
+
+The ETB list above is an operator-supplied paper assumption, not inferred
+borrow availability. Omit a symbol or leave the list empty and attempts to open
+that short are rejected. Broker recalls are represented as auditable forced-cover
+instructions; they never bypass the paper-only broker boundary.
 
 ### Historical backfills
 
