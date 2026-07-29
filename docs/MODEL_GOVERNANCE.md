@@ -60,20 +60,26 @@ A governed promotion requires both registered purged walk-forward metrics and a 
 ```bash
 trading-registry --registry .trading/models promote MODEL_VERSION \
   --reason "passed calibration and sealed holdout gates" \
-  --minimum-folds 5 \
-  --minimum-sharpe 0.25 \
-  --maximum-drawdown 0.15 \
-  --minimum-observations 500 \
-  --minimum-excess-return 0.0 \
-  --minimum-news-sharpe-delta 0.0 \
-  --minimum-holdout-net-return 0.0 \
-  --minimum-holdout-sharpe 0.0 \
-  --maximum-holdout-drawdown 0.15 \
-  --minimum-holdout-observations 100 \
-  --minimum-holdout-excess-return 0.0
+  --gate-config config/promotion/strict-paper-v1.json
 ```
 
-Promotion fails closed if the holdout is missing or any selected calibration or holdout gate fails. A successful event records the complete gate configuration, registered calibration metrics, and exact holdout evaluation used for the decision.
+The bundled gate manifest requires at least eight calibration folds and 1,000
+scored observations, positive cost-adjusted net and benchmark-excess returns,
+Sharpe above 0.50, and drawdown below 15%. The holdout plan may contain no more
+than three finalists and requires 300 observations, positive net and excess
+returns, positive multiplicity-adjusted lower bounds for both, and drawdown
+below 15%.
+
+Both calibration and holdout evidence must also show no symbol above 20% or
+sector above 35% of total PnL, zero unborrowable short orders, gross short
+exposure no higher than 30%, a single short no higher than 3%, and explicit
+borrow-status validation. Missing metrics fail closed. CLI threshold overrides
+are validated and the effective manifest plus SHA-256 are recorded in champion
+history.
+
+Promotion fails closed if the holdout is missing or any calibration, holdout,
+concentration, or short-safety gate fails. The historical holdout requirement
+cannot be disabled through the Python API.
 
 `trading-research train --promote` no longer provides a one-step shortcut for real historical datasets: the newly trained version cannot already have a holdout record, so the request fails closed after registration. Train, evaluate the frozen challenger once, then promote with `trading-registry`.
 

@@ -1,7 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-
 from trading_app.dataset import load_feature_dataset, write_feature_dataset
 from trading_app.holdout import evaluate_untouched_holdout, split_feature_dataset
 from trading_app.model_registry import ModelRegistry
@@ -48,7 +47,8 @@ def _metrics() -> BacktestMetrics:
         hit_rate=0.56,
         turnover=20,
         average_trade_return=0.006,
-        folds=6,
+        folds=8,
+        scored_observations=1000,
         excess_return_vs_benchmark=0.02,
         news_sharpe_delta=0.10,
     )
@@ -75,9 +75,7 @@ def test_split_purges_calibration_labels_crossing_holdout_boundary(tmp_path) -> 
     calibration, calibration_names, calibration_metadata = load_feature_dataset(
         tmp_path / "calibration.jsonl"
     )
-    holdout, holdout_names, holdout_metadata = load_feature_dataset(
-        tmp_path / "holdout.jsonl"
-    )
+    holdout, holdout_names, holdout_metadata = load_feature_dataset(tmp_path / "holdout.jsonl")
 
     assert calibration_names == holdout_names == ("trend",)
     assert all(row.timestamp < boundary for row in calibration)
@@ -94,6 +92,19 @@ def test_split_purges_calibration_labels_crossing_holdout_boundary(tmp_path) -> 
     assert calibration_metadata["split"]["split_id"] == holdout_metadata["split"]["split_id"]
 
 
+def test_split_rejects_more_than_three_holdout_finalists(tmp_path) -> None:
+    source = _write_source(tmp_path)
+
+    with pytest.raises(ValueError, match="between one and three"):
+        split_feature_dataset(
+            str(source),
+            str(tmp_path / "calibration.jsonl"),
+            str(tmp_path / "holdout.jsonl"),
+            split_time=datetime(2025, 1, 11, tzinfo=UTC),
+            candidate_family_size=4,
+        )
+
+
 def test_frozen_model_scores_holdout_once_and_can_pass_governed_promotion(tmp_path) -> None:
     source = _write_source(tmp_path)
     _split(source, tmp_path)
@@ -107,6 +118,16 @@ def test_frozen_model_scores_holdout_once_and_can_pass_governed_promotion(tmp_pa
         metadata={
             "dataset": str(tmp_path / "calibration.jsonl"),
             "dataset_sha256": "calibration-hash",
+            "diagnostics": {
+                "symbols": {"AAPL": {"pnl_contribution": 0.10}},
+                "sectors": {"Technology": {"pnl_contribution": 0.10}},
+                "short_safety": {
+                    "unborrowable_short_orders": 0,
+                    "maximum_gross_short_exposure": 0.0,
+                    "maximum_single_short_position": 0.0,
+                    "borrow_status_validated": True,
+                },
+            },
             "validation": {
                 "prediction_threshold": -1.0,
                 "transaction_cost_bps": 0.0,
@@ -127,9 +148,7 @@ def test_frozen_model_scores_holdout_once_and_can_pass_governed_promotion(tmp_pa
     assert report["metrics"]["net_return"] > 0
     assert report["metrics"]["net_return_lower_bound"] > 0
     assert report["uncertainty"]["candidate_family_size"] == 3
-    assert report["uncertainty"]["adjusted_confidence_level"] == pytest.approx(
-        1 - (1 - 0.95) / 3
-    )
+    assert report["uncertainty"]["adjusted_confidence_level"] == pytest.approx(1 - (1 - 0.95) / 3)
     assert report["controls"]["threshold_frozen_from_registration"] is True
     assert report["controls"]["statistical_plan_frozen_at_split"] is True
     evaluations = registry.holdout_evaluations(version=record.version)
@@ -153,6 +172,8 @@ def test_frozen_model_scores_holdout_once_and_can_pass_governed_promotion(tmp_pa
         minimum_holdout_excess_return=-1.0,
         minimum_holdout_net_return_lower_bound=-1.0,
         minimum_holdout_excess_return_lower_bound=-1.0,
+        maximum_symbol_pnl_contribution=1.0,
+        maximum_sector_pnl_contribution=1.0,
     )
     assert promoted.version == record.version
     champion = registry.champion()
@@ -163,6 +184,7 @@ def test_frozen_model_scores_holdout_once_and_can_pass_governed_promotion(tmp_pa
     gates = promotion["details"]["promotion_gates"]
     assert gates["minimum_holdout_net_return_lower_bound"] == -1.0
     assert gates["minimum_holdout_excess_return_lower_bound"] == -1.0
+    assert gates["maximum_symbol_pnl_contribution"] == 1.0
 
 
 def test_holdout_evaluation_rejects_calibration_dataset(tmp_path) -> None:

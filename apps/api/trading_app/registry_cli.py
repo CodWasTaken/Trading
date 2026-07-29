@@ -5,6 +5,7 @@ import json
 from dataclasses import asdict
 
 from .model_registry import ModelRegistry
+from .promotion import load_promotion_gates
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,29 +47,38 @@ def build_parser() -> argparse.ArgumentParser:
     )
     promote.add_argument("version")
     promote.add_argument("--reason", default="operator_promotion")
-    promote.add_argument("--minimum-folds", type=int, default=5)
-    promote.add_argument("--minimum-sharpe", type=float, default=0.25)
-    promote.add_argument("--maximum-drawdown", type=float, default=0.15)
-    promote.add_argument("--minimum-observations", type=int, default=500)
-    promote.add_argument("--minimum-excess-return", type=float, default=0.0)
-    promote.add_argument("--minimum-news-sharpe-delta", type=float, default=0.0)
-    promote.add_argument("--minimum-holdout-net-return", type=float, default=0.0)
-    promote.add_argument("--minimum-holdout-sharpe", type=float, default=0.0)
-    promote.add_argument("--maximum-holdout-drawdown", type=float, default=0.15)
-    promote.add_argument("--minimum-holdout-observations", type=int, default=100)
-    promote.add_argument("--minimum-holdout-excess-return", type=float, default=0.0)
+    promote.add_argument(
+        "--gate-config",
+        default="config/promotion/strict-paper-v1.json",
+    )
+    promote.add_argument("--minimum-folds", type=int)
+    promote.add_argument("--minimum-sharpe", type=float)
+    promote.add_argument("--maximum-drawdown", type=float)
+    promote.add_argument("--minimum-observations", type=int)
+    promote.add_argument("--minimum-net-return", type=float)
+    promote.add_argument("--minimum-excess-return", type=float)
+    promote.add_argument("--minimum-news-sharpe-delta", type=float)
+    promote.add_argument("--maximum-holdout-finalists", type=int)
+    promote.add_argument("--minimum-holdout-net-return", type=float)
+    promote.add_argument("--minimum-holdout-sharpe", type=float)
+    promote.add_argument("--maximum-holdout-drawdown", type=float)
+    promote.add_argument("--minimum-holdout-observations", type=int)
+    promote.add_argument("--minimum-holdout-excess-return", type=float)
     promote.add_argument(
         "--minimum-holdout-net-return-lower-bound",
         type=float,
-        default=0.0,
         help="Require the adjusted bootstrap lower bound to exceed this value",
     )
     promote.add_argument(
         "--minimum-holdout-excess-return-lower-bound",
         type=float,
-        default=0.0,
         help="Require the adjusted benchmark-excess lower bound to exceed this value",
     )
+    promote.add_argument("--maximum-symbol-pnl-contribution", type=float)
+    promote.add_argument("--maximum-sector-pnl-contribution", type=float)
+    promote.add_argument("--maximum-unborrowable-short-orders", type=int)
+    promote.add_argument("--maximum-gross-short-exposure", type=float)
+    promote.add_argument("--maximum-single-short-position", type=float)
 
     rollback = subparsers.add_parser(
         "rollback",
@@ -119,13 +129,16 @@ def main() -> None:
     elif arguments.command == "promote":
         record = registry.promote(
             arguments.version,
+            gate_config=load_promotion_gates(arguments.gate_config),
             minimum_folds=arguments.minimum_folds,
             minimum_sharpe=arguments.minimum_sharpe,
             maximum_drawdown=arguments.maximum_drawdown,
             minimum_observations=arguments.minimum_observations,
+            minimum_net_return=arguments.minimum_net_return,
             minimum_excess_return=arguments.minimum_excess_return,
             minimum_news_sharpe_delta=arguments.minimum_news_sharpe_delta,
             require_holdout_evaluation=True,
+            maximum_holdout_finalists=arguments.maximum_holdout_finalists,
             minimum_holdout_net_return=arguments.minimum_holdout_net_return,
             minimum_holdout_sharpe=arguments.minimum_holdout_sharpe,
             maximum_holdout_drawdown=arguments.maximum_holdout_drawdown,
@@ -137,6 +150,17 @@ def main() -> None:
             minimum_holdout_excess_return_lower_bound=(
                 arguments.minimum_holdout_excess_return_lower_bound
             ),
+            maximum_symbol_pnl_contribution=(
+                arguments.maximum_symbol_pnl_contribution
+            ),
+            maximum_sector_pnl_contribution=(
+                arguments.maximum_sector_pnl_contribution
+            ),
+            maximum_unborrowable_short_orders=(
+                arguments.maximum_unborrowable_short_orders
+            ),
+            maximum_gross_short_exposure=arguments.maximum_gross_short_exposure,
+            maximum_single_short_position=arguments.maximum_single_short_position,
             reason=arguments.reason,
         )
         result = {

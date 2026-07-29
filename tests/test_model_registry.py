@@ -1,10 +1,23 @@
 import pytest
-
 from trading_app.model_registry import ModelRegistry
 from trading_app.research import BacktestMetrics, RidgeReturnModel, synthetic_feature_rows
 
-
 FEATURE_NAMES = ("momentum", "news_score", "volatility", "spread_bps")
+
+
+def _governance_diagnostics() -> dict[str, object]:
+    symbols = {f"SYM{index}": {"pnl_contribution": 0.02} for index in range(5)}
+    sectors = {f"Sector {index}": {"pnl_contribution": 0.02} for index in range(5)}
+    return {
+        "symbols": symbols,
+        "sectors": sectors,
+        "short_safety": {
+            "unborrowable_short_orders": 0,
+            "maximum_gross_short_exposure": 0.30,
+            "maximum_single_short_position": 0.03,
+            "borrow_status_validated": True,
+        },
+    }
 
 
 def test_registry_registers_and_promotes_champion(tmp_path) -> None:
@@ -19,10 +32,19 @@ def test_registry_registers_and_promotes_champion(tmp_path) -> None:
         hit_rate=0.56,
         turnover=20,
         average_trade_return=0.006,
-        folds=4,
+        folds=8,
+        scored_observations=1000,
+        excess_return_vs_benchmark=0.02,
     )
     registry = ModelRegistry(tmp_path)
-    record = registry.register(model, metrics)
+    record = registry.register(
+        model,
+        metrics,
+        metadata={
+            "dataset": "synthetic_fixture",
+            "diagnostics": _governance_diagnostics(),
+        },
+    )
     registry.promote(record.version, require_holdout_evaluation=False)
     champion = registry.champion()
     assert champion is not None
@@ -45,12 +67,20 @@ def test_registry_can_require_benchmark_and_news_value(tmp_path) -> None:
         hit_rate=0.56,
         turnover=20,
         average_trade_return=0.006,
-        folds=5,
+        folds=8,
+        scored_observations=1000,
         excess_return_vs_benchmark=-0.01,
         news_sharpe_delta=-0.10,
     )
     registry = ModelRegistry(tmp_path)
-    record = registry.register(model, metrics)
+    record = registry.register(
+        model,
+        metrics,
+        metadata={
+            "dataset": "synthetic_fixture",
+            "diagnostics": _governance_diagnostics(),
+        },
+    )
 
     with pytest.raises(ValueError) as raised:
         registry.promote(

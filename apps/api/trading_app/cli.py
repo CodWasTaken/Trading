@@ -275,6 +275,7 @@ def train_dataset(
         threshold=threshold,
         ridge=ridge,
         cost_model=cost_model,
+        sector_by_symbol=None if universe is None else universe.sectors,
     )
     metrics = report.metrics
     diagnostics = report.to_dict()
@@ -446,10 +447,10 @@ def build_parser() -> argparse.ArgumentParser:
     real_train.add_argument("--periods-per-year", type=int, default=1638)
     real_train.add_argument("--threshold", type=float, default=0.0005)
     real_train.add_argument("--ridge", type=float, default=0.001)
-    real_train.add_argument("--minimum-folds", type=int, default=5)
-    real_train.add_argument("--minimum-sharpe", type=float, default=0.25)
+    real_train.add_argument("--minimum-folds", type=int, default=8)
+    real_train.add_argument("--minimum-sharpe", type=float, default=0.50)
     real_train.add_argument("--maximum-drawdown", type=float, default=0.15)
-    real_train.add_argument("--minimum-observations", type=int, default=500)
+    real_train.add_argument("--minimum-observations", type=int, default=1000)
     real_train.add_argument("--minimum-excess-return", type=float, default=0.0)
     real_train.add_argument("--minimum-news-sharpe-delta", type=float, default=0.0)
 
