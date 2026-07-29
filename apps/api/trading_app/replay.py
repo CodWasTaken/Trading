@@ -106,7 +106,15 @@ async def run_historical_replay(
     clock = ReplayClock(first_time)
     maximum_events = max(2_000, (len(ordered_bars) + len(ordered_news)) * 8 + 100)
     store = EventStore(max_events=maximum_events)
-    portfolio = Portfolio(settings.trading_starting_cash)
+    portfolio = Portfolio(
+        settings.trading_starting_cash,
+        initial_margin_requirement=settings.trading_initial_margin_requirement,
+        maintenance_margin_requirement=settings.trading_maintenance_margin_requirement,
+        borrow_rate_annual=settings.trading_borrow_rate_annual,
+        dividend_replacement_rate_annual=(
+            settings.trading_dividend_replacement_rate_annual
+        ),
+    )
     risk = RiskEngine(settings, clock=clock)
     engine = TradingEngine(
         store,
@@ -257,6 +265,30 @@ async def run_historical_replay(
             "signal_threshold": signal_threshold,
             "max_position_pct": settings.trading_max_position_pct,
             "max_gross_exposure_pct": settings.trading_max_gross_exposure_pct,
+            "max_long_position_pct": settings.trading_max_long_position_pct,
+            "max_short_position_pct": settings.trading_max_short_position_pct,
+            "max_gross_long_exposure_pct": (
+                settings.trading_max_gross_long_exposure_pct
+            ),
+            "max_gross_short_exposure_pct": (
+                settings.trading_max_gross_short_exposure_pct
+            ),
+            "initial_margin_requirement": (
+                settings.trading_initial_margin_requirement
+            ),
+            "maintenance_margin_requirement": (
+                settings.trading_maintenance_margin_requirement
+            ),
+            "borrow_rate_annual": settings.trading_borrow_rate_annual,
+            "borrow_status_max_age_seconds": (
+                settings.trading_borrow_status_max_age_seconds
+            ),
+            "easy_to_borrow_symbols": sorted(
+                settings.trading_easy_to_borrow_symbols
+            ),
+            "dividend_replacement_rate_annual": (
+                settings.trading_dividend_replacement_rate_annual
+            ),
             "max_daily_loss_pct": settings.trading_max_daily_loss_pct,
             "max_drawdown_pct": settings.trading_max_drawdown_pct,
             "minimum_confidence": settings.trading_min_confidence,
@@ -270,6 +302,20 @@ async def run_historical_replay(
             "traded_notional": traded_notional,
             "equity_points": len(equity_curve),
             "pnl_by_symbol": pnl_by_symbol,
+            "long_risk_attribution": {
+                "gross_exposure": final_snapshot.gross_long_exposure,
+                "realized_pnl": final_snapshot.long_realized_pnl,
+                "unrealized_pnl": final_snapshot.long_unrealized_pnl,
+            },
+            "short_risk_attribution": {
+                "gross_exposure": final_snapshot.gross_short_exposure,
+                "realized_pnl": final_snapshot.short_realized_pnl,
+                "unrealized_pnl": final_snapshot.short_unrealized_pnl,
+                "borrow_costs": final_snapshot.borrow_costs,
+                "dividend_replacement_costs": (
+                    final_snapshot.dividend_replacement_costs
+                ),
+            },
         },
         "final_portfolio": final_portfolio,
         "events": {
@@ -287,9 +333,12 @@ async def run_historical_replay(
         },
         "sources": source_metadata or {},
         "limitations": [
-            "Historical OHLC bars have no executable bid/ask quotes; replay uses the configured synthetic spread solely for execution and risk simulation.",
-            "Historical news knowledge_time may equal publication time because provider receipt time is unavailable.",
-            "Replay evidence is not evidence of future profitability and does not replace live paper validation.",
+            "Historical OHLC bars have no executable bid/ask quotes; replay uses the "
+            "configured synthetic spread solely for execution and risk simulation.",
+            "Historical news knowledge_time may equal publication time because provider "
+            "receipt time is unavailable.",
+            "Replay evidence is not evidence of future profitability and does not replace "
+            "live paper validation.",
         ],
     }
     return ReplayResult(report=report, trace=trace, equity_curve=equity_curve)

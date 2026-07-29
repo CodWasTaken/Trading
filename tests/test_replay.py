@@ -3,9 +3,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-
 from trading_app.config import Settings
-from trading_app.domain import Fill, Quote, Side
+from trading_app.domain import Fill, Quote, Side, SignalProposal
 from trading_app.historical import HistoricalBar
 from trading_app.portfolio import Portfolio
 from trading_app.replay import ReplayClock, run_historical_replay
@@ -181,3 +180,115 @@ async def test_replay_cli_writes_report_trace_and_verifies_twice(tmp_path: Path)
     assert report_path.exists()
     assert trace_path.exists()
     assert json.loads(report_path.read_text())["events"]["trace_sha256"]
+
+
+class ScriptedLongShortStrategy:
+    def __init__(self) -> None:
+        self._steps = iter(
+            (
+                (Side.SELL, 1_000.0),
+                (Side.BUY, 500.0),
+                (Side.BUY, 1_000.0),
+            )
+        )
+
+    def on_quote(
+        self,
+        quote: Quote,
+        news: list[object],
+        equity: float,
+    ) -> SignalProposal | None:
+        del news, equity
+        try:
+            side, target = next(self._steps)
+        except StopIteration:
+            return None
+        return SignalProposal(
+            symbol=quote.symbol,
+            side=side,
+            confidence=0.99,
+            expected_return=0.01 if side == Side.BUY else -0.01,
+            target_notional=target,
+            reference_price=quote.mid,
+            rationale=["deterministic long/short replay test"],
+            feature_snapshot={},
+        )
+
+
+@pytest.mark.asyncio
+async def test_replay_deterministically_opens_covers_and_reverses_short() -> None:
+    start = datetime(2025, 1, 2, 14, 30, tzinfo=UTC)
+    bars = [
+        HistoricalBar(
+            symbol="AAPL",
+            timestamp=start + timedelta(hours=index),
+            open=price,
+            high=price + 1,
+            low=price - 1,
+            close=price,
+            volume=10_000,
+        )
+        for index, price in enumerate((100.0, 95.0, 90.0))
+    ]
+    settings = replay_settings().model_copy(
+        update={
+            "trading_easy_to_borrow_symbols": ["AAPL"],
+            "trading_max_trades_per_day": 10,
+        }
+    )
+
+    async def execute():
+        return await run_historical_replay(
+            bars,
+            [],
+            settings,
+            ScriptedLongShortStrategy,
+            strategy_name="scripted-long-short",
+            bar_interval=timedelta(hours=1),
+            spread_bps=10,
+            slippage_bps=0,
+        )
+
+    first = await execute()
+    second = await execute()
+    assert first.report["events"]["trace_sha256"] == second.report["events"]["trace_sha256"]
+    effects = [
+        event["payload"]["effect"]
+        for event in first.trace
+        if event["type"] == "position_transition"
+    ]
+    assert effects == [
+        "open_short",
+        "partial_cover_short",
+        "reverse_short_to_long",
+    ]
+    performance = first.report["performance"]
+    assert performance["short_risk_attribution"]["realized_pnl"] > 0
+
+
+@pytest.mark.asyncio
+async def test_replay_deterministically_rejects_short_without_borrow() -> None:
+    start = datetime(2025, 1, 2, 14, 30, tzinfo=UTC)
+    bars = [
+        HistoricalBar(
+            symbol="AAPL",
+            timestamp=start,
+            open=100,
+            high=101,
+            low=99,
+            close=100,
+            volume=10_000,
+        )
+    ]
+    result = await run_historical_replay(
+        bars,
+        [],
+        replay_settings(),
+        ScriptedLongShortStrategy,
+        strategy_name="scripted-short-rejection",
+        bar_interval=timedelta(hours=1),
+    )
+    assert result.report["events"]["risk_rejection_reasons"] == {
+        "borrow_status_missing": 1
+    }
+    assert result.report["events"]["counts"].get("fill", 0) == 0

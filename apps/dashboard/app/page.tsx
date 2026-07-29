@@ -9,12 +9,24 @@ type Position = {
   last_price: number;
   market_value: number;
   unrealized_pnl: number;
+  realized_pnl: number;
+  direction: "long" | "short";
 };
 
 type Portfolio = {
   cash: number;
   equity: number;
   gross_exposure: number;
+  gross_long_exposure: number;
+  gross_short_exposure: number;
+  net_exposure: number;
+  buying_power: number;
+  long_realized_pnl: number;
+  short_realized_pnl: number;
+  long_unrealized_pnl: number;
+  short_unrealized_pnl: number;
+  borrow_costs: number;
+  dividend_replacement_costs: number;
   daily_pnl: number;
   drawdown: number;
   positions: Position[];
@@ -162,11 +174,17 @@ export default function Dashboard() {
         <Metric label="Portfolio equity" value={money.format(portfolio.equity)} />
         <Metric label="Today’s P&L" value={money.format(portfolio.daily_pnl)} />
         <Metric
-          label="Gross exposure"
-          value={money.format(portfolio.gross_exposure)}
+          label="Gross long"
+          value={money.format(portfolio.gross_long_exposure)}
         />
+        <Metric
+          label="Gross short"
+          value={money.format(portfolio.gross_short_exposure)}
+        />
+        <Metric label="Net exposure" value={money.format(portfolio.net_exposure)} />
         <Metric label="Drawdown" value={percent.format(portfolio.drawdown)} />
         <Metric label="Cash" value={money.format(portfolio.cash)} />
+        <Metric label="Buying power" value={money.format(portfolio.buying_power)} />
         <Metric label="Trades today" value={String(portfolio.trades_today)} />
       </section>
 
@@ -234,11 +252,16 @@ export default function Dashboard() {
               <div className="position" key={position.symbol}>
                 <div>
                   <strong>{position.symbol}</strong>
-                  <span>{position.quantity.toFixed(3)} shares</span>
+                  <span>
+                    {position.direction} · {position.quantity.toFixed(3)} shares
+                  </span>
                 </div>
                 <div className="right">
                   <strong>{money.format(position.market_value)}</strong>
-                  <span>{money.format(position.unrealized_pnl)}</span>
+                  <span>
+                    UPL {money.format(position.unrealized_pnl)} · RPL{" "}
+                    {money.format(position.realized_pnl)}
+                  </span>
                 </div>
               </div>
             ))}

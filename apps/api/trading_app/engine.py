@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import AsyncIterator
+from uuid import uuid4
 
+from .borrow import ForcedCoverInstruction
 from .broker import Broker
-from .domain import DecisionStatus, NewsEvent, Order, Quote
-from .portfolio import Portfolio
+from .domain import DecisionStatus, NewsEvent, Order, Quote, Side
+from .portfolio import Portfolio, classify_position_effect
 from .risk import RiskEngine
 from .store import EventStore
 from .strategy import Strategy
@@ -31,6 +33,7 @@ class TradingEngine:
 
     async def process_quote(self, quote: Quote) -> None:
         await self.store.set_quote(quote)
+        self.portfolio.accrue_financing(quote.event_time)
         self.portfolio.mark(quote)
         self.portfolio.rollover_session(quote.event_time)
         news = await self.store.recent_news_for(quote.symbol)
@@ -54,6 +57,11 @@ class TradingEngine:
             side=proposal.side,
             quantity=quantity,
             requested_price=quote.ask if proposal.side.value == "buy" else quote.bid,
+            position_effect=classify_position_effect(
+                self.portfolio.quantity(proposal.symbol),
+                proposal.side,
+                quantity,
+            ),
         )
         await self.store.add_order(order)
         try:
@@ -71,8 +79,58 @@ class TradingEngine:
                 },
             )
             return
-        self.portfolio.apply_fill(fill)
+        transition = self.portfolio.apply_fill(fill)
         await self.store.add_fill(fill)
+        await self.store.add_system_event(
+            "position_transition",
+            transition.model_dump(mode="json"),
+        )
+
+    async def process_forced_cover(
+        self,
+        instruction: ForcedCoverInstruction,
+        quote: Quote,
+    ) -> None:
+        """Execute a paper-only lender recall instruction without creating a signal."""
+        if quote.symbol != instruction.symbol:
+            raise ValueError("forced-cover quote symbol does not match instruction")
+        current = self.portfolio.quantity(instruction.symbol)
+        if current >= 0:
+            return
+        quantity = min(abs(current), instruction.quantity)
+        order = Order(
+            proposal_id=uuid4(),
+            symbol=instruction.symbol,
+            side=Side.BUY,
+            quantity=quantity,
+            requested_price=quote.ask,
+            position_effect=classify_position_effect(current, Side.BUY, quantity),
+        )
+        await self.store.add_system_event(
+            "borrow_recall",
+            instruction.model_dump(mode="json"),
+        )
+        await self.store.add_order(order)
+        try:
+            fill = await self.broker.execute(order, quote)
+        except Exception as error:
+            await self.store.add_system_event(
+                "forced_cover_execution_error",
+                {
+                    "order_id": str(order.id),
+                    "symbol": order.symbol,
+                    "quantity": order.quantity,
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                },
+            )
+            return
+        transition = self.portfolio.apply_fill(fill)
+        await self.store.add_fill(fill)
+        await self.store.add_system_event(
+            "position_transition",
+            transition.model_dump(mode="json"),
+        )
 
     async def process_news(self, event: NewsEvent) -> None:
         await self.store.add_news(event)
