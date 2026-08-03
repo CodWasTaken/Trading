@@ -5,7 +5,8 @@ from collections import defaultdict, deque
 from statistics import pstdev
 
 from .domain import NewsEvent, Quote, Side, SignalProposal
-from .modeling import ContextTradingModel, TradingModel
+from .modeling import ContextTradingModel, RidgeModelAdapter, TradingModel
+from .research import RidgeReturnModel
 
 
 class ChampionModelStrategy:
@@ -13,8 +14,18 @@ class ChampionModelStrategy:
 
     SUPPORTED_FEATURES = ("momentum", "news_score", "volatility", "spread_bps")
 
-    def __init__(self, model: TradingModel, minimum_edge: float = 0.0005) -> None:
-        capabilities = model.capabilities
+    def __init__(
+        self,
+        model: TradingModel | RidgeReturnModel,
+        minimum_edge: float = 0.0005,
+    ) -> None:
+        # Registry schema v4 and older tests may still hand us the legacy ridge
+        # implementation directly. Preserve that stable API while routing all
+        # inference through the governed model contract.
+        governed_model: TradingModel = (
+            RidgeModelAdapter(model) if isinstance(model, RidgeReturnModel) else model
+        )
+        capabilities = governed_model.capabilities
         unsupported = set(capabilities.feature_names) - set(self.SUPPORTED_FEATURES)
         if unsupported:
             raise ValueError(
@@ -26,7 +37,7 @@ class ChampionModelStrategy:
             raise ValueError("Model requires more live feature history than the runtime supports")
         if minimum_edge <= 0:
             raise ValueError("minimum_edge must be positive")
-        self.model = model
+        self.model = governed_model
         self.minimum_edge = minimum_edge
         self._prices: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=20))
         self._contexts: dict[str, deque[tuple[float, ...]]] = defaultdict(
