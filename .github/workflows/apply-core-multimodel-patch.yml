@@ -1,0 +1,45 @@
+name: Apply core multimodel patch
+
+on:
+  push:
+    branches:
+      - agent/multimodel-ai-platform
+    paths:
+      - .github/patches/core/**
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/patches/core/**
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/multimodel-ai-platform
+          fetch-depth: 0
+      - name: Verify and extract core
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/patches/core/chunk-* > /tmp/core.b64
+          base64 -d /tmp/core.b64 > /tmp/core.tar.xz
+          echo "c1ae4b1d3c033d63a6ffac580cf5255f10e511815e7edfbf2e9cec60ea765635  /tmp/core.tar.xz" | sha256sum -c -
+          tar -xJf /tmp/core.tar.xz -C .
+          rm -rf .github/patches/core
+          rm -f .github/workflows/apply-core-multimodel-patch.yml
+      - name: Commit core
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Add governed multi-model core"
+          git push origin HEAD:agent/multimodel-ai-platform
