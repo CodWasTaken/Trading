@@ -5,29 +5,33 @@ from collections import defaultdict, deque
 from statistics import pstdev
 
 from .domain import NewsEvent, Quote, Side, SignalProposal
-from .research import RidgeReturnModel
+from .modeling import ContextTradingModel, TradingModel
 
 
 class ChampionModelStrategy:
-    """Live inference wrapper for a registered point-in-time return model."""
+    """Live inference wrapper for a hash-verified registered paper model."""
 
     SUPPORTED_FEATURES = ("momentum", "news_score", "volatility", "spread_bps")
 
-    def __init__(self, model: RidgeReturnModel, minimum_edge: float = 0.0005) -> None:
-        unsupported = set(model.feature_names) - set(self.SUPPORTED_FEATURES)
+    def __init__(self, model: TradingModel, minimum_edge: float = 0.0005) -> None:
+        capabilities = model.capabilities
+        unsupported = set(capabilities.feature_names) - set(self.SUPPORTED_FEATURES)
         if unsupported:
             raise ValueError(
-                f"Champion features {sorted(unsupported)!r} are not available in live inference"
+                f"Model features {sorted(unsupported)!r} are not available in live inference"
             )
-        if not {"momentum", "news_score", "volatility"}.issubset(model.feature_names):
-            raise ValueError(
-                "Champion must include momentum, news_score, and volatility"
-            )
+        if capabilities.task != "return_regression" or not capabilities.live_compatible:
+            raise ValueError("Only live-compatible return-regression models may trade")
+        if capabilities.required_history > 20:
+            raise ValueError("Model requires more live feature history than the runtime supports")
         if minimum_edge <= 0:
             raise ValueError("minimum_edge must be positive")
         self.model = model
         self.minimum_edge = minimum_edge
         self._prices: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=20))
+        self._contexts: dict[str, deque[tuple[float, ...]]] = defaultdict(
+            lambda: deque(maxlen=20)
+        )
         self._last_direction: dict[str, Side] = {}
 
     def on_quote(
@@ -47,16 +51,26 @@ class ChampionModelStrategy:
             item.sentiment * item.novelty * item.source_quality for item in relevant
         ]
         news_score = sum(weighted_news) / len(weighted_news) if weighted_news else 0.0
-        news_event_type = relevant[0].event_type if relevant else "none"
-        news_source = relevant[0].source if relevant else "none"
         available_features = {
             "momentum": momentum,
             "news_score": news_score,
             "volatility": volatility,
             "spread_bps": quote.spread_bps,
         }
-        features = tuple(available_features[name] for name in self.model.feature_names)
-        prediction = self.model.predict(features)
+        features = tuple(
+            available_features[name] for name in self.model.capabilities.feature_names
+        )
+        context = self._contexts[quote.symbol]
+        context.append(features)
+        required = self.model.capabilities.required_history
+        if len(context) < required:
+            return None
+        if isinstance(self.model, ContextTradingModel):
+            prediction = self.model.predict_context(tuple(context))
+        else:
+            prediction = self.model.predict(features)
+        if not math.isfinite(prediction):
+            return None
         if abs(prediction) <= self.minimum_edge:
             return None
         side = Side.BUY if prediction > 0 else Side.SELL
@@ -70,6 +84,7 @@ class ChampionModelStrategy:
             0.95, 0.50 + abs(prediction) / max(self.minimum_edge * 8, 1e-9)
         )
         target_pct = min(0.05, 0.01 + math.sqrt(abs(prediction)) * 0.10)
+        capabilities = self.model.capabilities
         return SignalProposal(
             symbol=quote.symbol,
             side=side,
@@ -78,17 +93,19 @@ class ChampionModelStrategy:
             target_notional=max(100.0, equity * target_pct),
             reference_price=quote.mid,
             rationale=[
-                f"champion predicted return={prediction:.4%}",
+                f"{capabilities.implementation} predicted return={prediction:.4%}",
                 f"momentum={momentum:.4%}",
                 f"news score={news_score:.3f}",
                 f"volatility={volatility:.4%}",
             ],
             feature_snapshot={
                 **available_features,
-                "news_event_type": news_event_type,
-                "news_source": news_source,
+                "news_event_type": relevant[0].event_type if relevant else "none",
+                "news_source": relevant[0].source if relevant else "none",
                 "model_prediction": prediction,
                 "signal_threshold": self.minimum_edge,
-                "champion_model": True,
+                "model_family": capabilities.family,
+                "model_implementation": capabilities.implementation,
+                "paper_only": True,
             },
         )
