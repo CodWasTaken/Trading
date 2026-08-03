@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trading-platform"
-version = "0.22.0"
+version = "0.23.0"
 description = "Risk-first AI-assisted paper trading platform"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -26,6 +26,7 @@ trading-monitor = "trading_app.monitoring_cli:main"
 trading-smoke = "trading_app.smoke_cli:main"
 trading-candidates = "trading_app.candidates_cli:main"
 trading-graduation = "trading_app.graduation_cli:main"
+trading-models = "trading_app.model_cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -33,6 +34,22 @@ dev = [
   "pytest-asyncio>=0.24,<1",
   "ruff>=0.8,<1",
   "mypy>=1.13,<2",
+]
+models-tabular = [
+  "lightgbm>=4.5,<5",
+  "xgboost>=2.1,<4",
+  "catboost>=1.2,<2",
+  "scikit-learn>=1.6,<2",
+]
+models-sequence = [
+  "torch>=2.4,<3",
+]
+models = [
+  "lightgbm>=4.5,<5",
+  "xgboost>=2.1,<4",
+  "catboost>=1.2,<2",
+  "scikit-learn>=1.6,<2",
+  "torch>=2.4,<3",
 ]
 
 [tool.setuptools]

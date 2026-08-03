@@ -16,7 +16,8 @@ from .config import Settings, get_settings
 from .cost_model import cost_model_from_settings
 from .domain import PortfolioSnapshot
 from .engine import TradingEngine
-from .model_registry import ModelRegistry
+from .governed_models import GovernedModelRegistry
+from .model_api import build_model_router
 from .model_strategy import ChampionModelStrategy
 from .persistence import SQLiteEventSink
 from .portfolio import Portfolio
@@ -40,9 +41,7 @@ class ControlRequest(BaseModel):
 class AppState:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.universe = load_universe_manifest(
-            settings.trading_universe_manifest_path
-        )
+        self.universe = load_universe_manifest(settings.trading_universe_manifest_path)
         assert_universe_symbols(
             settings.trading_symbols,
             self.universe,
@@ -59,9 +58,7 @@ class AppState:
             dividend_replacement_rate_annual=(
                 settings.trading_dividend_replacement_rate_annual
             ),
-            margin_interest_rate_annual=(
-                settings.trading_margin_interest_rate_annual
-            ),
+            margin_interest_rate_annual=settings.trading_margin_interest_rate_annual,
         )
         self.risk = RiskEngine(settings)
         self.broker = (
@@ -69,30 +66,32 @@ class AppState:
             if settings.trading_execution_mode == "alpaca-paper"
             else InternalPaperBroker(cost_config=self.cost_model.execution)
         )
-        registry = ModelRegistry(settings.trading_model_registry_path)
-        champion_record = (
-            registry.champion()
-            if settings.trading_strategy_mode == "champion"
-            else None
-        )
-        if champion_record is not None:
+        registry = GovernedModelRegistry(settings.trading_model_registry_path)
+        selected_record = None
+        if settings.trading_strategy_mode == "champion":
+            selected_record = registry.active_paper() or registry.champion()
+        if selected_record is not None:
             assert_universe_binding(
-                {"universe": champion_record.metadata.get("universe")},
+                {"universe": selected_record.metadata.get("universe")},
                 self.universe,
-                context="paper champion",
+                context="paper model",
             )
-        champion = (
-            registry.load(champion_record.version)
-            if champion_record is not None
+        selected_model = (
+            registry.load_any(selected_record.version)
+            if selected_record is not None
             else None
         )
         strategy = (
-            ChampionModelStrategy(champion)
-            if champion is not None
+            ChampionModelStrategy(selected_model)
+            if selected_model is not None
             else ExplainableCatalystStrategy()
         )
         self.model_registry = registry
-        self.active_strategy = "champion" if champion is not None else "explainable"
+        self.active_strategy = (
+            f"active-paper:{selected_record.version}"
+            if selected_record is not None
+            else "explainable"
+        )
         self.engine = TradingEngine(
             store=self.store,
             portfolio=self.portfolio,
@@ -153,6 +152,7 @@ def get_state() -> AppState:
 
 
 StateDependency = Annotated[AppState, Depends(get_state)]
+app.include_router(build_model_router(get_state))
 
 
 @app.get("/health")
@@ -195,9 +195,7 @@ async def dashboard_summary(current: StateDependency) -> dict[str, object]:
                 "realized_pnl": portfolio.short_realized_pnl,
                 "unrealized_pnl": portfolio.short_unrealized_pnl,
                 "borrow_costs": portfolio.borrow_costs,
-                "dividend_replacement_costs": (
-                    portfolio.dividend_replacement_costs
-                ),
+                "dividend_replacement_costs": portfolio.dividend_replacement_costs,
                 "margin_interest_costs": portfolio.margin_interest_costs,
             },
         },
@@ -226,8 +224,8 @@ async def portfolio(current: StateDependency) -> dict[str, object]:
 
 @app.get("/v1/reports/polish-tax-estimate")
 async def polish_tax_estimate(current: StateDependency) -> dict[str, object]:
-    portfolio = current.portfolio.snapshot()
-    return _tax_estimate(current, portfolio)
+    portfolio_snapshot = current.portfolio.snapshot()
+    return _tax_estimate(current, portfolio_snapshot)
 
 
 def _tax_estimate(
@@ -244,9 +242,7 @@ def _tax_estimate(
         starting_equity=current.portfolio.starting_cash,
         current_equity=portfolio.equity,
         realized_pnl_before_explicit_costs=portfolio.realized_pnl,
-        explicit_execution_and_financing_costs=(
-            explicit_execution_and_financing
-        ),
+        explicit_execution_and_financing_costs=explicit_execution_and_financing,
         funding_fx_cost=current.cost_model.funding.estimated_conversion_cost_usd,
         config=current.cost_model.polish_tax,
     )
@@ -305,10 +301,7 @@ async def sec_filings(
         user_agent = current.settings.require_sec_user_agent()
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
-    client = SecEdgarClient(
-        user_agent,
-        base_url=current.settings.sec_data_base_url,
-    )
+    client = SecEdgarClient(user_agent, base_url=current.settings.sec_data_base_url)
     try:
         requested_forms = {part.strip() for part in forms.split(",") if part.strip()}
         filings = await client.recent_filings(cik, forms=requested_forms, limit=limit)
