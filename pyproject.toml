@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trading-platform"
-version = "0.23.0"
+version = "0.24.0"
 description = "Risk-first AI-assisted paper trading platform"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -27,6 +27,7 @@ trading-smoke = "trading_app.smoke_cli:main"
 trading-candidates = "trading_app.candidates_cli:main"
 trading-graduation = "trading_app.graduation_cli:main"
 trading-models = "trading_app.model_cli:main"
+trading-integrations = "trading_app.integrations_cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -42,6 +43,25 @@ models-tabular = [
   "scikit-learn>=1.6,<2",
 ]
 models-sequence = [
+  "torch>=2.4,<3",
+]
+models-foundation = [
+  "chronos-forecasting>=2,<3",
+  "uni2ts>=1,<2",
+  "gluonts>=0.16,<1",
+  "pandas>=2.2,<3",
+  "numpy>=2,<3",
+  "torch>=2.4,<3",
+]
+models-news = [
+  "transformers>=4.48,<6",
+  "peft>=0.14,<1",
+  "torch>=2.4,<3",
+]
+models-rl = [
+  "gymnasium>=1,<2",
+  "stable-baselines3>=2.7,<3",
+  "numpy>=2,<3",
   "torch>=2.4,<3",
 ]
 models = [
