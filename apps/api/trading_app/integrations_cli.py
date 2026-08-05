@@ -9,7 +9,9 @@ from .financial_news_ai import (
     load_news_model_spec,
     verify_news_weights,
 )
-from .mixed_candidates import finalize_mixed_generation, write_mixed_plan
+from .mixed_candidates import finalize_mixed_generation
+from .mixed_execution import execute_mixed_generation
+from .mixed_plan import write_executable_mixed_plan
 from .model_acquisition import acquire_huggingface_snapshot
 from .news_ai_features import join_news_ai_features
 from .pretrained_features import (
@@ -107,6 +109,15 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--generation", required=True, type=int)
     plan.add_argument("--seed", type=int, default=1729)
 
+    execute = subparsers.add_parser(
+        "mixed-execute",
+        help="Run and resume all 100 mixed-family calibration candidates",
+    )
+    execute.add_argument("--plan", required=True)
+    execute.add_argument("--resources", required=True)
+    execute.add_argument("--output-dir", required=True)
+    execute.add_argument("--retry-failed", action="store_true")
+
     finalize = subparsers.add_parser(
         "mixed-finalize",
         help="Require 100 successful calibration reports and freeze three finalists",
@@ -170,10 +181,17 @@ def main() -> None:
             arguments.spec,
         )
     elif arguments.command == "mixed-plan":
-        result = write_mixed_plan(
+        result = write_executable_mixed_plan(
             arguments.output,
             generation=arguments.generation,
             seed=arguments.seed,
+        )
+    elif arguments.command == "mixed-execute":
+        result = execute_mixed_generation(
+            arguments.plan,
+            arguments.resources,
+            arguments.output_dir,
+            retry_failed=arguments.retry_failed,
         )
     else:
         result = finalize_mixed_generation(
