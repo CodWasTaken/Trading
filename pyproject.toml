@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trading-platform"
-version = "0.24.0"
+version = "0.25.0"
 description = "Risk-first AI-assisted paper trading platform"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -46,9 +46,11 @@ models-sequence = [
   "torch>=2.4,<3",
 ]
 models-foundation = [
+  "timesfm[torch]>=2,<3",
   "chronos-forecasting>=2,<3",
   "uni2ts>=1,<2",
   "gluonts>=0.16,<1",
+  "huggingface-hub>=0.28,<2",
   "pandas>=2.2,<3",
   "numpy>=2,<3",
   "torch>=2.4,<3",
@@ -56,6 +58,7 @@ models-foundation = [
 models-news = [
   "transformers>=4.48,<6",
   "peft>=0.14,<1",
+  "huggingface-hub>=0.28,<2",
   "torch>=2.4,<3",
 ]
 models-rl = [
@@ -69,6 +72,24 @@ models = [
   "xgboost>=2.1,<4",
   "catboost>=1.2,<2",
   "scikit-learn>=1.6,<2",
+  "torch>=2.4,<3",
+]
+models-all = [
+  "lightgbm>=4.5,<5",
+  "xgboost>=2.1,<4",
+  "catboost>=1.2,<2",
+  "scikit-learn>=1.6,<2",
+  "timesfm[torch]>=2,<3",
+  "chronos-forecasting>=2,<3",
+  "uni2ts>=1,<2",
+  "gluonts>=0.16,<1",
+  "transformers>=4.48,<6",
+  "peft>=0.14,<1",
+  "huggingface-hub>=0.28,<2",
+  "gymnasium>=1,<2",
+  "stable-baselines3>=2.7,<3",
+  "pandas>=2.2,<3",
+  "numpy>=2,<3",
   "torch>=2.4,<3",
 ]
 
